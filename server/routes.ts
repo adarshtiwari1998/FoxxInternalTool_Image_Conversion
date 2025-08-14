@@ -228,6 +228,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Return processed image
+      console.log(`📁 Setting download filename: ${filename}.jpg`);
       res.setHeader('Content-Type', 'image/jpeg');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.jpg"`);
       res.send(processedImage);

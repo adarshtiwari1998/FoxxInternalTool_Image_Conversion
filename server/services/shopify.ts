@@ -199,11 +199,15 @@ export class ShopifyService {
         }
       `;
 
-      // Search by various patterns
+      // Search by various patterns - try broader searches for Shopify products
       const searchQueries = [
-        `"${imageIdentifier}"`,
-        imageIdentifier,
         `title:*${imageIdentifier}*`,
+        `product_type:*${imageIdentifier}*`,
+        imageIdentifier,
+        `"${imageIdentifier}"`,
+        // Try searching for common product patterns
+        `title:*Vactrap*`,
+        `title:*EZBio*`
       ];
 
       for (const searchQuery of searchQueries) {
@@ -230,14 +234,17 @@ export class ShopifyService {
         }
 
         const products = result.data?.products?.edges || [];
+        console.log(`📦 Found ${products.length} products to check`);
         
         // Look through products to find one with matching image
         for (const productEdge of products) {
           const product = productEdge.node;
+          console.log(`🔍 Checking product: ${product.title}`);
           
           // Check if any product image matches our URL
           for (const imageEdge of product.images.edges) {
             const productImage = imageEdge.node;
+            console.log(`🖼️ Comparing with product image: ${productImage.url}`);
             
             // Compare image URLs (handle different CDN formats)
             if (this.imagesMatch(imageUrl, productImage.url)) {
@@ -293,25 +300,57 @@ export class ShopifyService {
   private imagesMatch(url1: string, url2: string): boolean {
     // Handle different CDN formats and compare core identifiers
     try {
+      console.log(`🔗 Comparing URLs:`);
+      console.log(`   Input: ${url1}`);
+      console.log(`   Product: ${url2}`);
+      
+      // Direct URL comparison for exact matches (ignoring query parameters)
+      const cleanUrl1 = url1.split('?')[0];
+      const cleanUrl2 = url2.split('?')[0];
+      
+      if (cleanUrl1 === cleanUrl2) {
+        console.log(`✅ Direct URL match (ignoring query params)`);
+        return true;
+      }
+      
+      // Compare core identifiers
       const id1 = this.extractImageIdentifier(url1);
       const id2 = this.extractImageIdentifier(url2);
       
+      console.log(`   ID1: ${id1}`);
+      console.log(`   ID2: ${id2}`);
+      
       if (id1 && id2 && id1 === id2) {
+        console.log(`✅ Image identifier match`);
         return true;
       }
       
-      // Direct URL comparison for exact matches
-      if (url1 === url2) {
-        return true;
-      }
-      
-      // Compare without protocol and domain variations
+      // Compare pathnames
       const path1 = new URL(url1).pathname;
       const path2 = new URL(url2).pathname;
       
-      return path1 === path2;
+      console.log(`   Path1: ${path1}`);
+      console.log(`   Path2: ${path2}`);
+      
+      if (path1 === path2) {
+        console.log(`✅ Pathname match`);
+        return true;
+      }
+      
+      // Look for filename matches in paths
+      const filename1 = path1.split('/').pop()?.split('?')[0];
+      const filename2 = path2.split('/').pop()?.split('?')[0];
+      
+      if (filename1 && filename2 && filename1 === filename2) {
+        console.log(`✅ Filename match: ${filename1}`);
+        return true;
+      }
+      
+      console.log(`❌ No match found`);
+      return false;
       
     } catch (error) {
+      console.warn(`⚠️ Error comparing URLs:`, error);
       return false;
     }
   }
