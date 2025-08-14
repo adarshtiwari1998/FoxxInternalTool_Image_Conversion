@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, Download, Image as ImageIcon, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Loader2, Download, Image as ImageIcon, CheckCircle, XCircle, Clock, RefreshCw, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -76,8 +76,13 @@ export default function SkuConverter() {
       setIsConnected(true);
     };
     
-    // Set connected immediately since EventSource doesn't always fire onopen
-    setIsConnected(true);
+    // Set connected after a small delay to ensure proper connection
+    setTimeout(() => {
+      if (eventSource.readyState === EventSource.OPEN) {
+        setIsConnected(true);
+        console.log('📡 SSE connection confirmed for job:', jobId);
+      }
+    }, 1000);
     console.log('📡 SSE connection initiated for job:', jobId);
     
     eventSource.onmessage = (event) => {
@@ -436,6 +441,31 @@ export default function SkuConverter() {
     }
   };
 
+  // Clear batch job and reset state
+  const handleClearBatch = () => {
+    // Close SSE connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    
+    // Clear polling
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    
+    // Reset state
+    setCurrentBatchJob(null);
+    setIsConnected(false);
+    setBulkSkus('');
+    
+    toast({
+      title: "Cleared!",
+      description: "Batch processing state has been reset",
+    });
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
       {/* Configuration Panel */}
@@ -749,6 +779,84 @@ export default function SkuConverter() {
                   </div>
                 </ScrollArea>
               </div>
+              
+              {/* Download Results Section */}
+              {currentBatchJob.progress.completed > 0 && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h5 className="font-medium text-green-800 mb-1">Download Results</h5>
+                      <p className="text-sm text-green-600">
+                        {currentBatchJob.progress.completed} files ready for download
+                        {currentBatchJob.progress.failed > 0 && ` (${currentBatchJob.progress.failed} failed)`}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => downloadBatchMutation.mutate(currentBatchJob.id)}
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700"
+                        disabled={downloadBatchMutation.isPending}
+                        data-testid="download-results-button"
+                      >
+                        {downloadBatchMutation.isPending ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                            Downloading...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-4 w-4 mr-1" />
+                            Download ZIP
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        onClick={handleClearBatch}
+                        size="sm"
+                        variant="outline"
+                        className="border-green-300 text-green-700 hover:bg-green-100"
+                        data-testid="clear-batch-button"
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  {/* Quick Stats */}
+                  <div className="grid grid-cols-3 gap-4 text-center">
+                    <div className="bg-white rounded-lg p-3 border border-green-200">
+                      <div className="text-lg font-semibold text-green-700">{currentBatchJob.progress.completed}</div>
+                      <div className="text-xs text-green-600">Completed</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-green-200">
+                      <div className="text-lg font-semibold text-gray-700">{currentBatchJob.progress.total - currentBatchJob.progress.completed - currentBatchJob.progress.failed}</div>
+                      <div className="text-xs text-gray-600">Pending</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-green-200">
+                      <div className="text-lg font-semibold text-red-700">{currentBatchJob.progress.failed}</div>
+                      <div className="text-xs text-red-600">Failed</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Clear Button for incomplete jobs */}
+              {currentBatchJob.status !== 'completed' && (
+                <div className="flex justify-end mt-4">
+                  <Button
+                    onClick={handleClearBatch}
+                    size="sm"
+                    variant="outline"
+                    className="border-gray-300 text-gray-600 hover:bg-gray-100"
+                    data-testid="clear-batch-incomplete-button"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-1" />
+                    Clear & Reset
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
