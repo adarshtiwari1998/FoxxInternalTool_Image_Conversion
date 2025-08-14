@@ -14,7 +14,7 @@ import {
 import JSZip from 'jszip';
 
 // Helper function to extract meaningful filename from URL
-function extractFilenameFromUrl(url: string): string | null {
+async function extractFilenameFromUrl(url: string): Promise<string | null> {
   try {
     const urlObj = new URL(url);
     const pathname = urlObj.pathname;
@@ -22,7 +22,17 @@ function extractFilenameFromUrl(url: string): string | null {
     console.log(`🔍 Extracting filename from URL: ${url}`);
     console.log(`📂 Pathname: ${pathname}`);
     
-    // Handle Shopify CDN URLs - extract product info if possible
+    // Try reverse SKU lookup first for Shopify URLs
+    if (pathname.includes('/files/') || pathname.includes('/cdn/shop/')) {
+      console.log(`🔍 Attempting reverse SKU lookup for Shopify image...`);
+      const foundSku = await shopifyService.getSkuByImageUrl(url);
+      if (foundSku) {
+        console.log(`🎯 Using SKU from reverse lookup: ${foundSku}`);
+        return foundSku;
+      }
+    }
+    
+    // Handle Shopify CDN URLs - extract product info if possible  
     if (pathname.includes('/files/') || pathname.includes('/cdn/shop/')) {
       // Extract product name from Shopify CDN URLs like:
       // /cdn/shop/files/Vactraps_S_2L-800x800-foxxlifesciences_6fbb6068-bbb8-4fb8-81a4-3c14cab08830_1024x1024.png
@@ -203,7 +213,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Process image
       const { width, height } = imageProcessor.parseDimensions(dimensions);
-      const filename = extractFilenameFromUrl(url) || `converted-image-${Date.now()}`;
+      const filename = await extractFilenameFromUrl(url) || `converted-image-${Date.now()}`;
       
       const processedImage = await imageProcessor.processImage(url, {
         width,
@@ -312,9 +322,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Process URLs
       if (urls.length > 0) {
-        urls.forEach((url, index) => {
-          // Try to extract meaningful filename from URL
-          const extractedFilename = extractFilenameFromUrl(url) || `url-image-${index + 1}`;
+        for (let index = 0; index < urls.length; index++) {
+          const url = urls[index];
+          // Try to extract meaningful filename from URL (now async)
+          const extractedFilename = await extractFilenameFromUrl(url) || `url-image-${index + 1}`;
           
           imagesToProcess.push({
             url,
@@ -325,7 +336,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               filename: extractedFilename
             }
           });
-        });
+        }
       }
 
       if (imagesToProcess.length === 0) {

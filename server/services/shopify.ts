@@ -149,6 +149,173 @@ export class ShopifyService {
     }
   }
 
+  async getSkuByImageUrl(imageUrl: string): Promise<string | null> {
+    if (!this.isConfigured) {
+      console.warn('⚠️ Shopify API not configured for image URL lookup');
+      return null;
+    }
+    
+    try {
+      console.log(`🔍 Reverse lookup: Finding SKU for image URL: ${imageUrl}`);
+      
+      // Extract the core image identifier from URL for searching
+      const imageIdentifier = this.extractImageIdentifier(imageUrl);
+      if (!imageIdentifier) {
+        console.log(`📭 Could not extract image identifier from URL`);
+        return null;
+      }
+      
+      console.log(`🏷️ Looking for products with image: ${imageIdentifier}`);
+      
+      const query = `
+        query findProductByImage($query: String!) {
+          products(first: 50, query: $query) {
+            edges {
+              node {
+                id
+                title
+                handle
+                variants(first: 10) {
+                  edges {
+                    node {
+                      id
+                      sku
+                      title
+                    }
+                  }
+                }
+                images(first: 20) {
+                  edges {
+                    node {
+                      id
+                      url
+                      altText
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      // Search by various patterns
+      const searchQueries = [
+        `"${imageIdentifier}"`,
+        imageIdentifier,
+        `title:*${imageIdentifier}*`,
+      ];
+
+      for (const searchQuery of searchQueries) {
+        console.log(`🔎 Trying search query: ${searchQuery}`);
+        
+        const variables = { query: searchQuery };
+        
+        const response = await fetch(`${this.baseUrl}/graphql.json`, {
+          method: 'POST',
+          headers: this.headers,
+          body: JSON.stringify({ query, variables })
+        });
+
+        if (!response.ok) {
+          console.error(`❌ GraphQL API Error: ${response.status}`);
+          continue;
+        }
+
+        const result = await response.json();
+        
+        if (result.errors) {
+          console.error('❌ GraphQL errors:', result.errors);
+          continue;
+        }
+
+        const products = result.data?.products?.edges || [];
+        
+        // Look through products to find one with matching image
+        for (const productEdge of products) {
+          const product = productEdge.node;
+          
+          // Check if any product image matches our URL
+          for (const imageEdge of product.images.edges) {
+            const productImage = imageEdge.node;
+            
+            // Compare image URLs (handle different CDN formats)
+            if (this.imagesMatch(imageUrl, productImage.url)) {
+              console.log(`✅ Found matching product: ${product.title}`);
+              
+              // Get the first variant with a SKU
+              const firstVariantWithSku = product.variants.edges.find((v: any) => v.node.sku);
+              if (firstVariantWithSku) {
+                const foundSku = firstVariantWithSku.node.sku;
+                console.log(`🎯 Found SKU: ${foundSku}`);
+                return foundSku;
+              }
+            }
+          }
+        }
+      }
+      
+      console.log(`📭 No SKU found for image URL`);
+      return null;
+      
+    } catch (error) {
+      console.error('❌ Error in reverse SKU lookup:', error);
+      return null;
+    }
+  }
+
+  private extractImageIdentifier(url: string): string | null {
+    try {
+      // Extract meaningful parts from Shopify URLs
+      if (url.includes('/files/')) {
+        const filenamePart = url.split('/files/')[1];
+        if (filenamePart) {
+          // Get the base name before dimensions and UUIDs
+          return filenamePart
+            .replace(/\.[^.]*$/, '') // Remove extension
+            .replace(/-\d+x\d+.*$/, '') // Remove dimensions
+            .replace(/-foxxlifesciences.*$/, '') // Remove store-specific parts
+            .split('_')[0]; // Take first part before underscores
+        }
+      }
+      
+      // Fallback: extract filename from URL
+      const pathname = new URL(url).pathname;
+      const segments = pathname.split('/');
+      const filename = segments[segments.length - 1];
+      return filename.replace(/\.[^.]*$/, '').split('-')[0].split('_')[0];
+      
+    } catch (error) {
+      return null;
+    }
+  }
+
+  private imagesMatch(url1: string, url2: string): boolean {
+    // Handle different CDN formats and compare core identifiers
+    try {
+      const id1 = this.extractImageIdentifier(url1);
+      const id2 = this.extractImageIdentifier(url2);
+      
+      if (id1 && id2 && id1 === id2) {
+        return true;
+      }
+      
+      // Direct URL comparison for exact matches
+      if (url1 === url2) {
+        return true;
+      }
+      
+      // Compare without protocol and domain variations
+      const path1 = new URL(url1).pathname;
+      const path2 = new URL(url2).pathname;
+      
+      return path1 === path2;
+      
+    } catch (error) {
+      return false;
+    }
+  }
+
   private async searchProductBySkuRestImproved(sku: string): Promise<ShopifyProduct | null> {
     try {
       console.log(`Searching variants with REST API for SKU: ${sku}`);
