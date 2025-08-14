@@ -72,11 +72,22 @@ export default function SkuConverter() {
       setIsConnected(true);
     };
     
+    // Set connected immediately since EventSource doesn't always fire onopen
+    setIsConnected(true);
+    
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         
-        if (data.type === 'jobProgress') {
+        // Ensure connection status is updated when we receive data
+        if (!isConnected) {
+          setIsConnected(true);
+        }
+        
+        if (data.type === 'connected') {
+          // Initial heartbeat - confirm connection
+          setIsConnected(true);
+        } else if (data.type === 'jobProgress') {
           setCurrentBatchJob(prev => prev ? {
             ...prev,
             status: data.job.status,
