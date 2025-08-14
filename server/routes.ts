@@ -1,9 +1,11 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { WebSocketServer } from 'ws';
 import { storage } from "./storage";
 import { shopifyService } from "./services/shopify";
 import { imageProcessor } from "./services/imageProcessor";
 import { pdfProcessor } from "./services/pdfProcessor";
+import { queueProcessor } from "./services/queueProcessor";
 import { 
   insertProcessingJobSchema, 
   bulkProcessingRequestSchema,
@@ -288,84 +290,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Process bulk mixed (SKUs + URLs)
-  app.post("/api/process-bulk-mixed", async (req, res) => {
+  // Start batch processing job (queue-based)
+  app.post("/api/start-batch-job", async (req, res) => {
     try {
       const validatedData = bulkMixedProcessingRequestSchema.parse(req.body);
-      const { skus, urls, dimensions, dpi } = validatedData;
+      const { skus = [], urls = [], dimensions, dpi } = validatedData;
 
-      console.log(`🔄 Processing bulk mixed: ${skus.length} SKUs + ${urls.length} URLs`);
+      console.log(`🚀 Starting batch job: ${skus.length} SKUs + ${urls.length} URLs`);
 
-      // Prepare images for processing
-      const imagesToProcess: Array<{ url: string; options: any }> = [];
-      const { width, height } = imageProcessor.parseDimensions(dimensions);
+      // Prepare items for queue
+      const items: Array<{ type: 'sku' | 'url'; input: string }> = [];
+      
+      skus.forEach(sku => items.push({ type: 'sku', input: sku }));
+      urls.forEach(url => items.push({ type: 'url', input: url }));
 
-      // Process SKUs
-      if (skus.length > 0) {
-        const products = await shopifyService.getMultipleProductsBySkus(skus);
-        
-        for (const [sku, product] of Object.entries(products)) {
-          if (product && product.images.length > 0) {
-            imagesToProcess.push({
-              url: product.images[0].src,
-              options: {
-                width,
-                height,
-                dpi,
-                filename: sku
-              }
-            });
-          } else {
-            console.warn(`⚠️ No image found for SKU: ${sku}`);
-          }
-        }
+      if (items.length === 0) {
+        return res.status(400).json({ error: "No valid items to process" });
       }
 
-      // Process URLs
-      if (urls.length > 0) {
-        for (let index = 0; index < urls.length; index++) {
-          const url = urls[index];
-          // Try to extract meaningful filename from URL (now async)
-          const extractedFilename = await extractFilenameFromUrl(url) || `url-image-${index + 1}`;
-          
-          imagesToProcess.push({
-            url,
-            options: {
-              width,
-              height,
-              dpi,
-              filename: extractedFilename
-            }
-          });
-        }
+      // Add to queue
+      const jobId = await queueProcessor.addBatchJob(items, { dimensions, dpi });
+
+      console.log(`✅ Created batch job: ${jobId}`);
+      res.json({ jobId, message: "Batch job started" });
+
+    } catch (error) {
+      console.error("Error starting batch job:", error);
+      res.status(500).json({ error: "Failed to start batch job" });
+    }
+  });
+
+  // Get batch job status
+  app.get("/api/batch-job/:jobId", async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = queueProcessor.getJob(jobId);
+      
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
       }
 
-      if (imagesToProcess.length === 0) {
-        return res.status(400).json({ error: "No valid images found to process" });
-      }
-
-      // Process all images
-      console.log(`📸 Processing ${imagesToProcess.length} images...`);
-      const processedImages = await imageProcessor.processMultipleImages(imagesToProcess);
-
-      // Create ZIP file
-      const zip = new JSZip();
-      processedImages.forEach(({ filename, buffer }) => {
-        zip.file(filename, buffer);
+      res.json({
+        id: job.id,
+        status: job.status,
+        progress: job.progress,
+        items: job.items.map(item => ({
+          id: item.id,
+          type: item.type,
+          input: item.input,
+          status: item.status,
+          result: item.result ? {
+            filename: item.result.filename,
+            previewUrl: item.result.previewUrl
+          } : undefined,
+          error: item.error
+        })),
+        startedAt: job.startedAt,
+        completedAt: job.completedAt
       });
 
-      const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+    } catch (error) {
+      console.error("Error getting batch job:", error);
+      res.status(500).json({ error: "Failed to get batch job" });
+    }
+  });
 
-      console.log(`✅ Created ZIP with ${processedImages.length} processed images`);
+  // Download batch job results as ZIP
+  app.get("/api/batch-job/:jobId/download", async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = queueProcessor.getJob(jobId);
+      
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
 
-      // Send ZIP file
+      if (job.progress.completed === 0) {
+        return res.status(400).json({ error: "No completed items to download" });
+      }
+
+      const zipBuffer = await queueProcessor.generateZipForJob(jobId);
+
       res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', 'attachment; filename="processed-images.zip"');
+      res.setHeader('Content-Disposition', `attachment; filename="batch-${jobId}.zip"`);
       res.send(zipBuffer);
 
     } catch (error) {
-      console.error("Error processing bulk mixed:", error);
-      res.status(500).json({ error: "Failed to process bulk images" });
+      console.error("Error downloading batch job:", error);
+      res.status(500).json({ error: "Failed to download batch job" });
     }
   });
 
@@ -452,5 +464,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
+  
+  // Setup WebSocket server for real-time updates
+  const wss = new WebSocketServer({ server: httpServer });
+  const clients = new Map<string, Set<any>>(); // jobId -> Set of WebSocket connections
+  
+  wss.on('connection', (ws) => {
+    console.log('📡 New WebSocket connection');
+    
+    ws.on('message', (message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.type === 'subscribe' && data.jobId) {
+          if (!clients.has(data.jobId)) {
+            clients.set(data.jobId, new Set());
+          }
+          clients.get(data.jobId)!.add(ws);
+          console.log(`📡 Client subscribed to job: ${data.jobId}`);
+        }
+      } catch (error) {
+        console.error('❌ WebSocket message error:', error);
+      }
+    });
+    
+    ws.on('close', () => {
+      // Remove client from all subscriptions
+      Array.from(clients.entries()).forEach(([jobId, jobClients]) => {
+        jobClients.delete(ws);
+        if (jobClients.size === 0) {
+          clients.delete(jobId);
+        }
+      });
+    });
+  });
+  
+  // Listen to queue processor events and broadcast to clients
+  queueProcessor.on('jobProgress', (job) => {
+    const jobClients = clients.get(job.id);
+    if (jobClients) {
+      const message = JSON.stringify({
+        type: 'jobProgress',
+        job: {
+          id: job.id,
+          status: job.status,
+          progress: job.progress
+        }
+      });
+      
+      jobClients.forEach(client => {
+        if (client.readyState === 1) { // OPEN
+          client.send(message);
+        }
+      });
+    }
+  });
+  
+  queueProcessor.on('itemProgress', ({ jobId, item }) => {
+    const jobClients = clients.get(jobId);
+    if (jobClients) {
+      const message = JSON.stringify({
+        type: 'itemProgress',
+        jobId,
+        item: {
+          id: item.id,
+          type: item.type,
+          input: item.input,
+          status: item.status,
+          result: item.result ? {
+            filename: item.result.filename,
+            previewUrl: item.result.previewUrl
+          } : undefined,
+          error: item.error
+        }
+      });
+      
+      jobClients.forEach(client => {
+        if (client.readyState === 1) { // OPEN
+          client.send(message);
+        }
+      });
+    }
+  });
+  
   return httpServer;
 }

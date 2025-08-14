@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Download, Image as ImageIcon } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Loader2, Download, Image as ImageIcon, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -16,6 +18,31 @@ interface Product {
   id: number;
   title: string;
   images: Array<{ src: string; alt: string | null }>;
+}
+
+interface ProcessingItem {
+  id: string;
+  type: 'sku' | 'url';
+  input: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  result?: {
+    filename: string;
+    previewUrl?: string;
+  };
+  error?: string;
+}
+
+interface BatchJob {
+  id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress: {
+    total: number;
+    completed: number;
+    failed: number;
+  };
+  items: ProcessingItem[];
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export default function SkuConverter() {
@@ -26,7 +53,66 @@ export default function SkuConverter() {
   const [dpi, setDpi] = useState("300");
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [currentBatchJob, setCurrentBatchJob] = useState<BatchJob | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
   const { toast } = useToast();
+
+  // WebSocket connection for real-time updates
+  useEffect(() => {
+    const connectWebSocket = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}`;
+      
+      wsRef.current = new WebSocket(wsUrl);
+      
+      wsRef.current.onopen = () => {
+        console.log('🔗 WebSocket connected');
+        setIsConnected(true);
+      };
+      
+      wsRef.current.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'jobProgress') {
+          setCurrentBatchJob(prev => prev ? {
+            ...prev,
+            status: data.job.status,
+            progress: data.job.progress
+          } : null);
+        } else if (data.type === 'itemProgress') {
+          setCurrentBatchJob(prev => {
+            if (!prev || prev.id !== data.jobId) return prev;
+            
+            const updatedItems = prev.items.map(item => 
+              item.id === data.item.id ? { ...item, ...data.item } : item
+            );
+            
+            return { ...prev, items: updatedItems };
+          });
+        }
+      };
+      
+      wsRef.current.onclose = () => {
+        console.log('🔌 WebSocket disconnected');
+        setIsConnected(false);
+        // Reconnect after 3 seconds
+        setTimeout(connectWebSocket, 3000);
+      };
+      
+      wsRef.current.onerror = (error) => {
+        console.error('❌ WebSocket error:', error);
+      };
+    };
+    
+    connectWebSocket();
+    
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   // Clear preview when input is empty
   useEffect(() => {
@@ -35,6 +121,16 @@ export default function SkuConverter() {
       setPreviewImage(null);
     }
   }, [singleInput]);
+
+  // Subscribe to job updates when batch job starts
+  useEffect(() => {
+    if (currentBatchJob && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'subscribe',
+        jobId: currentBatchJob.id
+      }));
+    }
+  }, [currentBatchJob?.id]);
 
   // Helper function to detect if input is URL or SKU
   const isUrl = (input: string): boolean => {
@@ -112,8 +208,8 @@ export default function SkuConverter() {
 
 
 
-  // Process bulk SKUs/URLs mutation
-  const processBulkMutation = useMutation({
+  // Start batch processing job
+  const startBatchJobMutation = useMutation({
     mutationFn: async () => {
       const inputs = parseInputs(bulkSkus);
       
@@ -129,32 +225,69 @@ export default function SkuConverter() {
         }
       });
       
-      const response = await apiRequest('POST', '/api/process-bulk-mixed', {
+      const response = await apiRequest('POST', '/api/start-batch-job', {
         skus,
         urls,
         dimensions,
         dpi: Number(dpi)
       });
-      return response;
+      return response.json();
     },
-    onSuccess: async (response) => {
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'processed-images.zip';
-      a.click();
-      window.URL.revokeObjectURL(url);
+    onSuccess: (data) => {
+      const newJob: BatchJob = {
+        id: data.jobId,
+        status: 'pending',
+        progress: { total: parseInputs(bulkSkus).length, completed: 0, failed: 0 },
+        items: parseInputs(bulkSkus).map((input, index) => ({
+          id: `${data.jobId}_item_${index}`,
+          type: isUrl(input) ? 'url' : 'sku',
+          input: input.trim(),
+          status: 'pending'
+        }))
+      };
+      setCurrentBatchJob(newJob);
       
       toast({
-        title: "Success!",
-        description: "Images processed and downloaded as ZIP",
+        title: "Batch job started!",
+        description: `Processing ${parseInputs(bulkSkus).length} items`,
       });
     },
     onError: (error) => {
       toast({
         title: "Error",
-        description: "Failed to process bulk images",
+        description: "Failed to start batch processing",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Download completed batch job
+  const downloadBatchMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const response = await fetch(`/api/batch-job/${jobId}/download`);
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+      return response;
+    },
+    onSuccess: async (response, jobId) => {
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `batch-${jobId}.zip`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      
+      toast({
+        title: "Success!",
+        description: "Batch results downloaded as ZIP",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to download batch results",
         variant: "destructive",
       });
     }
@@ -224,7 +357,7 @@ export default function SkuConverter() {
         });
         return;
       }
-      processBulkMutation.mutate();
+      startBatchJobMutation.mutate();
     }
   };
 
@@ -365,20 +498,53 @@ export default function SkuConverter() {
           </div>
 
           {/* Process Button */}
-          <Button 
-            onClick={handleProcess} 
-            className="w-full bg-foxx-blue hover:bg-blue-600"
-            disabled={processSingleMutation.isPending || processBulkMutation.isPending}
-          >
-            {(processSingleMutation.isPending || processBulkMutation.isPending) ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Processing...
-              </>
-            ) : (
-              "Process & Download"
+          <div className="space-y-3">
+            <Button 
+              onClick={handleProcess} 
+              className="w-full bg-foxx-blue hover:bg-blue-600"
+              disabled={processSingleMutation.isPending || startBatchJobMutation.isPending || (currentBatchJob?.status === 'processing')}
+            >
+              {processSingleMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Processing...
+                </>
+              ) : startBatchJobMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Starting batch...
+                </>
+              ) : currentBatchJob?.status === 'processing' ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Processing batch...
+                </>
+              ) : (
+                "Process & Download"
+              )}
+            </Button>
+
+            {currentBatchJob && currentBatchJob.progress.completed > 0 && (
+              <Button
+                onClick={() => downloadBatchMutation.mutate(currentBatchJob.id)}
+                variant="outline"
+                className="w-full"
+                disabled={downloadBatchMutation.isPending}
+              >
+                {downloadBatchMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Downloading...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download Results ({currentBatchJob.progress.completed} files)
+                  </>
+                )}
+              </Button>
             )}
-          </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -429,8 +595,87 @@ export default function SkuConverter() {
             </div>
           )}
 
-          {/* Processing Status */}
-          {(processSingleMutation.isPending || processBulkMutation.isPending) && (
+          {/* Batch Processing Status */}
+          {currentBatchJob && (
+            <div className="mt-4 space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-medium text-blue-800">
+                    Batch Processing {currentBatchJob.status === 'completed' ? 'Completed' : 'In Progress'}
+                  </h4>
+                  <Badge variant="outline" className="text-xs">
+                    {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+                  </Badge>
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Progress: {currentBatchJob.progress.completed} / {currentBatchJob.progress.total}</span>
+                    <span className="text-gray-500">
+                      {currentBatchJob.progress.failed > 0 && `${currentBatchJob.progress.failed} failed`}
+                    </span>
+                  </div>
+                  <Progress 
+                    value={(currentBatchJob.progress.completed / currentBatchJob.progress.total) * 100}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+
+              {/* Items Grid */}
+              <div className="border rounded-lg">
+                <div className="p-3 border-b bg-gray-50">
+                  <h5 className="font-medium text-sm">Processing Items</h5>
+                </div>
+                <ScrollArea className="h-64">
+                  <div className="p-3 space-y-3">
+                    {currentBatchJob.items.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center gap-3 p-2 border rounded-lg hover:bg-gray-50"
+                      >
+                        <div className="flex-shrink-0">
+                          {item.status === 'pending' && <Clock className="h-4 w-4 text-gray-400" />}
+                          {item.status === 'processing' && <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />}
+                          {item.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-500" />}
+                          {item.status === 'failed' && <XCircle className="h-4 w-4 text-red-500" />}
+                        </div>
+                        
+                        <div className="flex-grow min-w-0">
+                          <div className="flex items-center gap-2">
+                            <Badge variant={item.type === 'sku' ? 'default' : 'secondary'} className="text-xs">
+                              {item.type.toUpperCase()}
+                            </Badge>
+                            <span className="text-sm font-medium truncate">{item.input}</span>
+                          </div>
+                          {item.error && (
+                            <p className="text-xs text-red-600 mt-1">{item.error}</p>
+                          )}
+                          {item.result && (
+                            <p className="text-xs text-green-600 mt-1">✅ {item.result.filename}</p>
+                          )}
+                        </div>
+
+                        {item.result?.previewUrl && (
+                          <div className="flex-shrink-0">
+                            <img
+                              src={item.result.previewUrl}
+                              alt={item.input}
+                              className="w-12 h-12 object-cover rounded border"
+                              loading="lazy"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            </div>
+          )}
+
+          {/* Single Processing Status */}
+          {processSingleMutation.isPending && !currentBatchJob && (
             <div className="mt-4 bg-blue-50 border border-blue-200 rounded-md p-4">
               <div className="flex items-center">
                 <Loader2 className="h-5 w-5 text-blue-600 animate-spin mr-3" />
