@@ -19,6 +19,9 @@ function extractFilenameFromUrl(url: string): string | null {
     const urlObj = new URL(url);
     const pathname = urlObj.pathname;
     
+    console.log(`🔍 Extracting filename from URL: ${url}`);
+    console.log(`📂 Pathname: ${pathname}`);
+    
     // Handle Shopify CDN URLs - extract product info if possible
     if (pathname.includes('/files/') || pathname.includes('/cdn/shop/')) {
       // Extract product name from Shopify CDN URLs like:
@@ -27,25 +30,36 @@ function extractFilenameFromUrl(url: string): string | null {
       
       if (pathname.includes('/files/')) {
         filenamePart = pathname.split('/files/')[1];
-      } else if (pathname.includes('/products/')) {
-        filenamePart = pathname.split('/products/')[1];
       }
       
+      console.log(`📄 Filename part: ${filenamePart}`);
+      
       if (filenamePart) {
-        // Extract the meaningful part before dimensions or UUIDs
-        let cleanName = filenamePart
-          .replace(/_\d+x\d+.*$/, '') // Remove dimensions and everything after
-          .replace(/[-_]foxxlifesciences.*$/, '') // Remove foxxlifesciences and UUID parts
-          .replace(/[-_][a-f0-9]{8}[-][a-f0-9]{4}[-][a-f0-9]{4}[-][a-f0-9]{4}[-][a-f0-9]{12}.*$/, '') // Remove UUID patterns
-          .replace(/[-_]+$/, '') // Remove trailing dashes/underscores
-          .replace(/^[-_]+/, '') // Remove leading dashes/underscores
-          .replace(/[-_]+/g, '-'); // Normalize separators
+        // Step by step cleaning
+        let cleanName = filenamePart;
         
-        // Try to extract meaningful product name from Shopify product URLs
-        if (cleanName.includes('Vactraps')) {
-          // Handle Vactraps product naming
-          cleanName = cleanName.replace(/[-_]S[-_]/, '-S-').replace(/[-_](\d+L)[-_]/, '-$1-');
-        }
+        // Remove file extension first
+        cleanName = cleanName.replace(/\.[^.]*$/, '');
+        console.log(`🧹 After extension removal: ${cleanName}`);
+        
+        // Remove dimensions pattern (like -800x800)
+        cleanName = cleanName.replace(/-\d+x\d+/g, '');
+        console.log(`📏 After dimensions removal: ${cleanName}`);
+        
+        // Remove foxxlifesciences and UUID parts
+        cleanName = cleanName.replace(/-foxxlifesciences_[a-f0-9-_]+/g, '');
+        console.log(`🏷️  After foxxlifesciences removal: ${cleanName}`);
+        
+        // Remove UUID patterns
+        cleanName = cleanName.replace(/_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/g, '');
+        cleanName = cleanName.replace(/_\d+x\d+$/g, ''); // Remove trailing dimensions like _1024x1024
+        console.log(`🆔 After UUID removal: ${cleanName}`);
+        
+        // Clean up remaining artifacts
+        cleanName = cleanName.replace(/[-_]+$/, '').replace(/^[-_]+/, ''); // Remove trailing/leading separators
+        cleanName = cleanName.replace(/[-_]+/g, '-'); // Normalize separators
+        
+        console.log(`✨ Final clean name: ${cleanName}`);
         
         if (cleanName && cleanName.length > 2) {
           return cleanName;
@@ -60,16 +74,19 @@ function extractFilenameFromUrl(url: string): string | null {
     if (lastSegment && lastSegment.length > 0) {
       // Remove file extension for cleaner name
       const nameWithoutExt = lastSegment.replace(/\.[^.]*$/, '');
+      console.log(`📁 Extracted from path: ${nameWithoutExt}`);
       if (nameWithoutExt && nameWithoutExt.length > 0) {
         return nameWithoutExt;
       }
     }
     
     // Fallback to domain name if no good filename found
-    return urlObj.hostname.replace(/^www\./, '').replace(/\./g, '-');
+    const fallback = urlObj.hostname.replace(/^www\./, '').replace(/\./g, '-');
+    console.log(`🔄 Using fallback: ${fallback}`);
+    return fallback;
     
   } catch (error) {
-    console.warn('Failed to extract filename from URL:', url);
+    console.warn('❌ Failed to extract filename from URL:', url, error);
     return null;
   }
 }
