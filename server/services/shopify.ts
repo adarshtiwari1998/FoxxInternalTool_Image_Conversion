@@ -1,7 +1,7 @@
 import { ShopifyProduct, shopifyProductSchema } from "@shared/schema";
 
-const SHOPIFY_STORE = process.env.STORE_URL || process.env.SHOPIFY_STORE;
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+const SHOPIFY_STORE = process.env.SHOPIFY_STORE_URL || process.env.STORE_URL || process.env.SHOPIFY_STORE;
+const SHOPIFY_ACCESS_TOKEN = process.env.STORE_ACCESS_TOKEN || process.env.SHOPIFY_ACCESS_TOKEN;
 
 export class ShopifyService {
   private baseUrl: string;
