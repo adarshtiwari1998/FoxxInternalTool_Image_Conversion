@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,14 @@ export default function SkuConverter() {
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const { toast } = useToast();
+
+  // Clear preview when input is empty
+  useEffect(() => {
+    if (!singleInput.trim()) {
+      setCurrentProduct(null);
+      setPreviewImage(null);
+    }
+  }, [singleInput]);
 
   // Helper function to detect if input is URL or SKU
   const isUrl = (input: string): boolean => {
@@ -90,12 +98,26 @@ export default function SkuConverter() {
 
 
 
-  // Process bulk SKUs mutation
+  // Process bulk SKUs/URLs mutation
   const processBulkMutation = useMutation({
     mutationFn: async () => {
-      const skus = bulkSkus.split('\n').filter(sku => sku.trim()).slice(0, 10);
-      const response = await apiRequest('POST', '/api/process-bulk', {
+      const inputs = bulkSkus.split('\n').filter(input => input.trim()).slice(0, 10);
+      
+      // Separate SKUs and URLs
+      const skus: string[] = [];
+      const urls: string[] = [];
+      
+      inputs.forEach(input => {
+        if (isUrl(input.trim())) {
+          urls.push(input.trim());
+        } else {
+          skus.push(input.trim());
+        }
+      });
+      
+      const response = await apiRequest('POST', '/api/process-bulk-mixed', {
         skus,
+        urls,
         dimensions,
         dpi: Number(dpi)
       });
@@ -179,19 +201,19 @@ export default function SkuConverter() {
       }
       processSingleMutation.mutate();
     } else {
-      const skus = bulkSkus.split('\n').filter(sku => sku.trim());
-      if (skus.length === 0) {
+      const inputs = bulkSkus.split('\n').filter(input => input.trim());
+      if (inputs.length === 0) {
         toast({
           title: "Error", 
-          description: "Please enter at least one SKU",
+          description: "Please enter at least one SKU or URL",
           variant: "destructive",
         });
         return;
       }
-      if (skus.length > 10) {
+      if (inputs.length > 10) {
         toast({
           title: "Error",
-          description: "Maximum 10 SKUs allowed for bulk processing",
+          description: "Maximum 10 SKUs/URLs allowed for bulk processing",
           variant: "destructive",
         });
         return;
@@ -222,7 +244,7 @@ export default function SkuConverter() {
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="bulk" id="bulk" />
-                <Label htmlFor="bulk">Bulk SKUs (up to 10)</Label>
+                <Label htmlFor="bulk">Bulk SKUs/URLs (up to 10)</Label>
               </div>
             </RadioGroup>
           </div>
@@ -246,19 +268,19 @@ export default function SkuConverter() {
             </div>
           )}
 
-          {/* Bulk SKU Input */}
+          {/* Bulk SKU/URL Input */}
           {mode === "bulk" && (
             <div>
-              <Label htmlFor="bulk-skus">Product SKUs (one per line, max 10)</Label>
+              <Label htmlFor="bulk-skus">Product SKUs or Image URLs (one per line, max 10)</Label>
               <Textarea
                 id="bulk-skus"
-                placeholder="66P-00022N-FLS&#10;66P-00023N-FLS&#10;..."
+                placeholder="66P-00022N-FLS&#10;https://example.com/image.jpg&#10;66P-00023N-FLS&#10;..."
                 rows={6}
                 value={bulkSkus}
                 onChange={(e) => setBulkSkus(e.target.value)}
                 className="mt-2"
               />
-              <p className="text-xs text-gray-500 mt-1">Enter one SKU per line</p>
+              <p className="text-xs text-gray-500 mt-1">Enter one SKU or image URL per line - the system will auto-detect</p>
             </div>
           )}
 
@@ -359,7 +381,7 @@ export default function SkuConverter() {
                 <ImageIcon className="w-6 h-6 text-gray-400" />
               </div>
               <h3 className="text-sm font-medium text-gray-900 mb-1">Bulk Processing Mode</h3>
-              <p className="text-sm text-gray-500">Enter SKUs and click process to download ZIP</p>
+              <p className="text-sm text-gray-500">Enter SKUs or image URLs and click process to download ZIP</p>
             </div>
           )}
 

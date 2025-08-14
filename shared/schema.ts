@@ -64,6 +64,18 @@ export const bulkProcessingRequestSchema = z.object({
 
 export type BulkProcessingRequest = z.infer<typeof bulkProcessingRequestSchema>;
 
+// Mixed bulk processing request (SKUs + URLs)
+export const bulkMixedProcessingRequestSchema = z.object({
+  skus: z.array(z.string()).max(10).optional().default([]),
+  urls: z.array(z.string().url()).max(10).optional().default([]),
+  dimensions: z.enum(['342x427', '600x600']),
+  dpi: z.number().min(72).max(1200),
+}).refine(data => data.skus.length + data.urls.length >= 1 && data.skus.length + data.urls.length <= 10, {
+  message: "Total SKUs and URLs must be between 1 and 10"
+});
+
+export type BulkMixedProcessingRequest = z.infer<typeof bulkMixedProcessingRequestSchema>;
+
 // PDF processing request  
 export const pdfProcessingRequestSchema = z.object({
   url: z.string().url(),

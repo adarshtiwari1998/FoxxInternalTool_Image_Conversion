@@ -7,6 +7,7 @@ import { pdfProcessor } from "./services/pdfProcessor";
 import { 
   insertProcessingJobSchema, 
   bulkProcessingRequestSchema,
+  bulkMixedProcessingRequestSchema,
   pdfProcessingRequestSchema,
   urlProcessingRequestSchema
 } from "@shared/schema";
@@ -194,6 +195,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     } catch (error) {
       console.error("Error processing bulk SKUs:", error);
+      res.status(500).json({ error: "Failed to process bulk images" });
+    }
+  });
+
+  // Process bulk mixed (SKUs + URLs)
+  app.post("/api/process-bulk-mixed", async (req, res) => {
+    try {
+      const validatedData = bulkMixedProcessingRequestSchema.parse(req.body);
+      const { skus, urls, dimensions, dpi } = validatedData;
+
+      console.log(`🔄 Processing bulk mixed: ${skus.length} SKUs + ${urls.length} URLs`);
+
+      // Prepare images for processing
+      const imagesToProcess: Array<{ url: string; options: any }> = [];
+      const { width, height } = imageProcessor.parseDimensions(dimensions);
+
+      // Process SKUs
+      if (skus.length > 0) {
+        const products = await shopifyService.getMultipleProductsBySkus(skus);
+        
+        for (const [sku, product] of Object.entries(products)) {
+          if (product && product.images.length > 0) {
+            imagesToProcess.push({
+              url: product.images[0].src,
+              options: {
+                width,
+                height,
+                dpi,
+                filename: sku
+              }
+            });
+          } else {
+            console.warn(`⚠️ No image found for SKU: ${sku}`);
+          }
+        }
+      }
+
+      // Process URLs
+      if (urls.length > 0) {
+        urls.forEach((url, index) => {
+          imagesToProcess.push({
+            url,
+            options: {
+              width,
+              height,
+              dpi,
+              filename: `url-image-${index + 1}`
+            }
+          });
+        });
+      }
+
+      if (imagesToProcess.length === 0) {
+        return res.status(400).json({ error: "No valid images found to process" });
+      }
+
+      // Process all images
+      console.log(`📸 Processing ${imagesToProcess.length} images...`);
+      const processedImages = await imageProcessor.processMultipleImages(imagesToProcess);
+
+      // Create ZIP file
+      const zip = new JSZip();
+      processedImages.forEach(({ filename, buffer }) => {
+        zip.file(filename, buffer);
+      });
+
+      const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+
+      console.log(`✅ Created ZIP with ${processedImages.length} processed images`);
+
+      // Send ZIP file
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', 'attachment; filename="processed-images.zip"');
+      res.send(zipBuffer);
+
+    } catch (error) {
+      console.error("Error processing bulk mixed:", error);
       res.status(500).json({ error: "Failed to process bulk images" });
     }
   });
