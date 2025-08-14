@@ -6,8 +6,8 @@ import fetch from 'node-fetch';
 import sharp from 'sharp';
 
 export interface PdfProcessingOptions {
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
   filename: string;
 }
 
@@ -47,11 +47,17 @@ export class PdfProcessor {
 
         try {
           // Read and process the image
-          const buffer = await sharp(imagePath)
-            .resize(options.width, options.height, {
+          let sharpProcessor = sharp(imagePath);
+          
+          // Only resize if dimensions are provided
+          if (options.width && options.height) {
+            sharpProcessor = sharpProcessor.resize(options.width, options.height, {
               fit: 'contain',
               background: { r: 255, g: 255, b: 255, alpha: 1 }
-            })
+            });
+          }
+          
+          const buffer = await sharpProcessor
             .jpeg({
               quality: 90,
               progressive: true

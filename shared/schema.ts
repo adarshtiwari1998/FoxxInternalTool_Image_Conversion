@@ -79,7 +79,7 @@ export type BulkMixedProcessingRequest = z.infer<typeof bulkMixedProcessingReque
 // PDF processing request  
 export const pdfProcessingRequestSchema = z.object({
   url: z.string().url(),
-  dimensions: z.enum(['342x427', '600x600']),
+  dimensions: z.enum(['original', '342x427', '600x600']),
 });
 
 export type PdfProcessingRequest = z.infer<typeof pdfProcessingRequestSchema>;

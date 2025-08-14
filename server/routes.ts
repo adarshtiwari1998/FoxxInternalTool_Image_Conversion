@@ -386,14 +386,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateProcessingJob(job.id, { status: 'processing' });
 
       // Process PDF
-      const { width, height } = imageProcessor.parseDimensions(dimensions);
-      const filename = 'document'; // Base filename for PDF pages
+      let processOptions;
+      if (dimensions === 'original') {
+        processOptions = {
+          filename: 'document'
+        };
+      } else {
+        const { width, height } = imageProcessor.parseDimensions(dimensions);
+        processOptions = {
+          width,
+          height,
+          filename: 'document'
+        };
+      }
       
-      const processedPages = await pdfProcessor.processPdf(url, {
-        width,
-        height,
-        filename
-      });
+      const processedPages = await pdfProcessor.processPdf(url, processOptions);
 
       // Create ZIP file
       const zip = new JSZip();

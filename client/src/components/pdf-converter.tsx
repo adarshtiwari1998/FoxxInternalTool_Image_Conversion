@@ -11,7 +11,7 @@ import { apiRequest } from "@/lib/queryClient";
 
 export default function PdfConverter() {
   const [pdfUrl, setPdfUrl] = useState("");
-  const [dimensions, setDimensions] = useState("342x427");
+  const [dimensions, setDimensions] = useState("original");
   const { toast } = useToast();
 
   // Process PDF mutation
@@ -95,20 +95,27 @@ export default function PdfConverter() {
 
           {/* Output Format */}
           <div>
-            <Label className="text-sm font-medium mb-3 block">Output Dimensions</Label>
+            <Label className="text-sm font-medium mb-3 block">Output Format</Label>
             <RadioGroup value={dimensions} onValueChange={setDimensions}>
+              <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50">
+                <RadioGroupItem value="original" id="pdf-original" />
+                <Label htmlFor="pdf-original" className="cursor-pointer flex-1">
+                  <div className="font-medium">Original PDF Size</div>
+                  <div className="text-xs text-gray-500">Keep original document dimensions</div>
+                </Label>
+              </div>
               <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50">
                 <RadioGroupItem value="342x427" id="pdf-dim1" />
                 <Label htmlFor="pdf-dim1" className="cursor-pointer flex-1">
                   <div className="font-medium">Standard (342 × 427)</div>
-                  <div className="text-xs text-gray-500">Portrait format</div>
+                  <div className="text-xs text-gray-500">Portrait format for product displays</div>
                 </Label>
               </div>
               <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50">
                 <RadioGroupItem value="600x600" id="pdf-dim2" />
                 <Label htmlFor="pdf-dim2" className="cursor-pointer flex-1">
                   <div className="font-medium">Square (600 × 600)</div>
-                  <div className="text-xs text-gray-500">Square format</div>
+                  <div className="text-xs text-gray-500">Square format for social media</div>
                 </Label>
               </div>
             </RadioGroup>
