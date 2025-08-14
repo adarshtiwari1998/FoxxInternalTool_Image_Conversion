@@ -403,12 +403,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const processedPages = await pdfProcessor.processPdf(url, processOptions);
 
       // Create ZIP file
+      console.log(`📦 Creating ZIP with ${processedPages.length} pages...`);
       const zip = new JSZip();
       processedPages.forEach(({ filename, buffer }) => {
+        console.log(`📄 Adding to ZIP: ${filename} (${buffer.length} bytes)`);
         zip.file(filename, buffer);
       });
 
-      const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+      console.log(`🗜️ Generating ZIP buffer...`);
+      const zipBuffer = await zip.generateAsync({ 
+        type: 'nodebuffer',
+        compression: 'DEFLATE',
+        compressionOptions: {
+          level: 6
+        }
+      });
+
+      console.log(`✅ ZIP created: ${zipBuffer.length} bytes`);
 
       await storage.updateProcessingJob(job.id, { status: 'completed' });
 
