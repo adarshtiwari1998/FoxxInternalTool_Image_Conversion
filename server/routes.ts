@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { WebSocketServer } from 'ws';
 import { storage } from "./storage";
 import { shopifyService } from "./services/shopify";
 import { imageProcessor } from "./services/imageProcessor";
@@ -296,7 +295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedData = bulkMixedProcessingRequestSchema.parse(req.body);
       const { skus = [], urls = [], dimensions, dpi } = validatedData;
 
-      console.log(`🚀 Starting batch job: ${skus.length} SKUs + ${urls.length} URLs`);
+      console.log(`🚀 Starting batch job: ${skus.length} SKUs + ${urls.length} URLs (optimized for up to 30 items)`);
 
       // Prepare items for queue
       const items: Array<{ type: 'sku' | 'url'; input: string }> = [];
@@ -306,6 +305,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (items.length === 0) {
         return res.status(400).json({ error: "No valid items to process" });
+      }
+
+      if (items.length > 30) {
+        return res.status(400).json({ error: "Maximum 30 items allowed per batch for optimal performance" });
       }
 
       // Add to queue
@@ -465,44 +468,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const httpServer = createServer(app);
   
-  // Setup WebSocket server for real-time updates
-  const wss = new WebSocketServer({ server: httpServer });
-  const clients = new Map<string, Set<any>>(); // jobId -> Set of WebSocket connections
+  // Setup Server-Sent Events for real-time updates (avoids WebSocket conflicts)
+  const clients = new Map<string, Set<any>>(); // jobId -> Set of SSE connections
   
-  wss.on('connection', (ws) => {
-    console.log('📡 New WebSocket connection');
+  // SSE endpoint for job progress
+  app.get('/api/events/:jobId', (req, res) => {
+    const { jobId } = req.params;
     
-    ws.on('message', (message) => {
-      try {
-        const data = JSON.parse(message.toString());
-        if (data.type === 'subscribe' && data.jobId) {
-          if (!clients.has(data.jobId)) {
-            clients.set(data.jobId, new Set());
-          }
-          clients.get(data.jobId)!.add(ws);
-          console.log(`📡 Client subscribed to job: ${data.jobId}`);
-        }
-      } catch (error) {
-        console.error('❌ WebSocket message error:', error);
-      }
+    // Set SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
     });
     
-    ws.on('close', () => {
-      // Remove client from all subscriptions
-      Array.from(clients.entries()).forEach(([jobId, jobClients]) => {
-        jobClients.delete(ws);
+    // Add client to job subscription
+    if (!clients.has(jobId)) {
+      clients.set(jobId, new Set());
+    }
+    clients.get(jobId)!.add(res);
+    
+    console.log(`📡 SSE client subscribed to job: ${jobId}`);
+    
+    // Send initial heartbeat
+    res.write('data: {"type":"connected"}\n\n');
+    
+    // Clean up on client disconnect
+    req.on('close', () => {
+      const jobClients = clients.get(jobId);
+      if (jobClients) {
+        jobClients.delete(res);
         if (jobClients.size === 0) {
           clients.delete(jobId);
         }
-      });
+      }
+      console.log(`🔌 SSE client disconnected from job: ${jobId}`);
     });
   });
   
-  // Listen to queue processor events and broadcast to clients
+  // Listen to queue processor events and broadcast to SSE clients
   queueProcessor.on('jobProgress', (job) => {
     const jobClients = clients.get(job.id);
     if (jobClients) {
-      const message = JSON.stringify({
+      const data = JSON.stringify({
         type: 'jobProgress',
         job: {
           id: job.id,
@@ -512,8 +522,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       jobClients.forEach(client => {
-        if (client.readyState === 1) { // OPEN
-          client.send(message);
+        try {
+          client.write(`data: ${data}\n\n`);
+        } catch (error) {
+          jobClients.delete(client);
         }
       });
     }
@@ -522,7 +534,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   queueProcessor.on('itemProgress', ({ jobId, item }) => {
     const jobClients = clients.get(jobId);
     if (jobClients) {
-      const message = JSON.stringify({
+      const data = JSON.stringify({
         type: 'itemProgress',
         jobId,
         item: {
@@ -539,8 +551,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       jobClients.forEach(client => {
-        if (client.readyState === 1) { // OPEN
-          client.send(message);
+        try {
+          client.write(`data: ${data}\n\n`);
+        } catch (error) {
+          jobClients.delete(client);
         }
       });
     }

@@ -37,8 +37,8 @@ class QueueProcessor extends EventEmitter {
   private jobs = new Map<string, BatchJob>();
   private processingQueue: string[] = [];
   private isProcessing = false;
-  private readonly BATCH_SIZE = 5; // Process 5 items at a time
-  private readonly CONCURRENT_BATCHES = 2; // Process 2 batches simultaneously
+  private readonly BATCH_SIZE = 10; // Process 10 items at a time - optimized for 30 SKUs
+  private readonly CONCURRENT_BATCHES = 3; // Process 3 batches simultaneously
 
   constructor() {
     super();

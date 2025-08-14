@@ -55,23 +55,25 @@ export default function SkuConverter() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [currentBatchJob, setCurrentBatchJob] = useState<BatchJob | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const { toast } = useToast();
 
-  // WebSocket connection for real-time updates
-  useEffect(() => {
-    const connectWebSocket = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}`;
-      
-      wsRef.current = new WebSocket(wsUrl);
-      
-      wsRef.current.onopen = () => {
-        console.log('🔗 WebSocket connected');
-        setIsConnected(true);
-      };
-      
-      wsRef.current.onmessage = (event) => {
+  // Server-Sent Events connection for real-time updates (avoids WebSocket conflicts)
+  const connectToJobUpdates = (jobId: string) => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+    
+    const eventSource = new EventSource(`/api/events/${jobId}`);
+    eventSourceRef.current = eventSource;
+    
+    eventSource.onopen = () => {
+      console.log('🔗 SSE connected for job:', jobId);
+      setIsConnected(true);
+    };
+    
+    eventSource.onmessage = (event) => {
+      try {
         const data = JSON.parse(event.data);
         
         if (data.type === 'jobProgress') {
@@ -91,25 +93,22 @@ export default function SkuConverter() {
             return { ...prev, items: updatedItems };
           });
         }
-      };
-      
-      wsRef.current.onclose = () => {
-        console.log('🔌 WebSocket disconnected');
-        setIsConnected(false);
-        // Reconnect after 3 seconds
-        setTimeout(connectWebSocket, 3000);
-      };
-      
-      wsRef.current.onerror = (error) => {
-        console.error('❌ WebSocket error:', error);
-      };
+      } catch (error) {
+        console.error('❌ SSE message parsing error:', error);
+      }
     };
     
-    connectWebSocket();
-    
+    eventSource.onerror = (error) => {
+      console.error('❌ SSE error:', error);
+      setIsConnected(false);
+    };
+  };
+  
+  // Cleanup SSE on unmount
+  useEffect(() => {
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
       }
     };
   }, []);
@@ -124,11 +123,8 @@ export default function SkuConverter() {
 
   // Subscribe to job updates when batch job starts
   useEffect(() => {
-    if (currentBatchJob && wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'subscribe',
-        jobId: currentBatchJob.id
-      }));
+    if (currentBatchJob?.id) {
+      connectToJobUpdates(currentBatchJob.id);
     }
   }, [currentBatchJob?.id]);
 
@@ -247,9 +243,10 @@ export default function SkuConverter() {
       };
       setCurrentBatchJob(newJob);
       
+      const itemCount = parseInputs(bulkSkus).length;
       toast({
         title: "Batch job started!",
-        description: `Processing ${parseInputs(bulkSkus).length} items`,
+        description: `Processing ${itemCount} items ${itemCount <= 30 ? '(optimized for up to 30 items)' : ''}`,
       });
     },
     onError: (error) => {
@@ -453,8 +450,11 @@ export default function SkuConverter() {
               <div className="flex items-center justify-between mt-1">
                 <p className="text-xs text-gray-500">Paste from Excel/Google Sheets or enter manually - supports tabs, commas, newlines</p>
                 {bulkSkus && (
-                  <Badge variant="outline" className="text-xs">
-                    {parseInputs(bulkSkus).length} items
+                  <Badge 
+                    variant={parseInputs(bulkSkus).length <= 30 ? "outline" : "destructive"} 
+                    className="text-xs"
+                  >
+                    {parseInputs(bulkSkus).length} items {parseInputs(bulkSkus).length <= 30 ? '(optimized)' : '(max 30)'}
                   </Badge>
                 )}
               </div>
