@@ -20,37 +20,57 @@ interface Product {
 
 export default function SkuConverter() {
   const [mode, setMode] = useState<"single" | "bulk">("single");
-  const [inputType, setInputType] = useState<"sku" | "url">("sku");
-  const [singleSku, setSingleSku] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
+  const [singleInput, setSingleInput] = useState("");
   const [bulkSkus, setBulkSkus] = useState("");
   const [dimensions, setDimensions] = useState("342x427");
   const [dpi, setDpi] = useState("300");
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const { toast } = useToast();
+
+  // Helper function to detect if input is URL or SKU
+  const isUrl = (input: string): boolean => {
+    try {
+      new URL(input);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   // Fetch product by SKU
   const { data: product, isLoading: fetchingProduct, refetch: fetchProduct } = useQuery({
-    queryKey: ['/api/product', singleSku],
+    queryKey: ['/api/product', singleInput],
     enabled: false,
   });
 
-  // Process single SKU mutation
+  // Process single input (SKU or URL) mutation
   const processSingleMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest('POST', '/api/process-sku', {
-        sku: singleSku,
-        dimensions,
-        dpi: Number(dpi)
-      });
-      return response;
+      const inputIsUrl = isUrl(singleInput);
+      
+      if (inputIsUrl) {
+        const response = await apiRequest('POST', '/api/process-url', {
+          url: singleInput,
+          dimensions,
+          dpi: Number(dpi)
+        });
+        return response;
+      } else {
+        const response = await apiRequest('POST', '/api/process-sku', {
+          sku: singleInput,
+          dimensions,
+          dpi: Number(dpi)
+        });
+        return response;
+      }
     },
     onSuccess: async (response) => {
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${singleSku}.jpg`;
+      a.download = isUrl(singleInput) ? 'converted-image.jpg' : `${singleInput}.jpg`;
       a.click();
       window.URL.revokeObjectURL(url);
       
@@ -68,38 +88,7 @@ export default function SkuConverter() {
     }
   });
 
-  // Process single URL mutation
-  const processUrlMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest('POST', '/api/process-url', {
-        url: imageUrl,
-        dimensions,
-        dpi: Number(dpi)
-      });
-      return response;
-    },
-    onSuccess: async (response) => {
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `converted-image.jpg`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      
-      toast({
-        title: "Success!",
-        description: "Image processed and downloaded successfully",
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: "Error",
-        description: "Failed to process image",
-        variant: "destructive",
-      });
-    }
-  });
+
 
   // Process bulk SKUs mutation
   const processBulkMutation = useMutation({
@@ -136,19 +125,32 @@ export default function SkuConverter() {
   });
 
   const handleFetchProduct = async () => {
-    if (!singleSku.trim()) {
+    if (!singleInput.trim()) {
       toast({
         title: "Error",
-        description: "Please enter a SKU",
+        description: "Please enter a SKU or image URL",
         variant: "destructive",
       });
       return;
     }
+
+    // If it's a URL, just set it as preview
+    if (isUrl(singleInput)) {
+      setPreviewImage(singleInput);
+      setCurrentProduct(null);
+      toast({
+        title: "Image URL detected!",
+        description: "Ready to process image from URL",
+      });
+      return;
+    }
     
+    // If it's a SKU, fetch from Shopify
     try {
       const result = await fetchProduct();
       if (result.data) {
         setCurrentProduct(result.data as Product);
+        setPreviewImage(null);
         toast({
           title: "Product found!",
           description: `Loaded ${(result.data as Product).title}`,
@@ -161,43 +163,21 @@ export default function SkuConverter() {
         variant: "destructive",
       });
       setCurrentProduct(null);
+      setPreviewImage(null);
     }
   };
 
   const handleProcess = () => {
     if (mode === "single") {
-      if (inputType === "sku") {
-        if (!singleSku.trim()) {
-          toast({
-            title: "Error",
-            description: "Please enter a SKU",
-            variant: "destructive",
-          });
-          return;
-        }
-        processSingleMutation.mutate();
-      } else {
-        if (!imageUrl.trim()) {
-          toast({
-            title: "Error",
-            description: "Please enter an image URL",
-            variant: "destructive",
-          });
-          return;
-        }
-        // Basic URL validation
-        try {
-          new URL(imageUrl);
-        } catch {
-          toast({
-            title: "Error",
-            description: "Please enter a valid URL",
-            variant: "destructive",
-          });
-          return;
-        }
-        processUrlMutation.mutate();
+      if (!singleInput.trim()) {
+        toast({
+          title: "Error",
+          description: "Please enter a SKU or image URL",
+          variant: "destructive",
+        });
+        return;
       }
+      processSingleMutation.mutate();
     } else {
       const skus = bulkSkus.split('\n').filter(sku => sku.trim());
       if (skus.length === 0) {
@@ -247,58 +227,22 @@ export default function SkuConverter() {
             </RadioGroup>
           </div>
 
-          {/* Input Type Selection (only for single mode) */}
+          {/* Single Input (SKU or URL) */}
           {mode === "single" && (
             <div>
-              <Label className="text-sm font-medium">Input Type</Label>
-              <RadioGroup 
-                value={inputType} 
-                onValueChange={(value: "sku" | "url") => setInputType(value)}
-                className="flex items-center space-x-4 mt-2"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="sku" id="input-sku" />
-                  <Label htmlFor="input-sku">SKU Lookup</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="url" id="input-url" />
-                  <Label htmlFor="input-url">Direct URL</Label>
-                </div>
-              </RadioGroup>
-            </div>
-          )}
-
-          {/* Single SKU Input */}
-          {mode === "single" && inputType === "sku" && (
-            <div>
-              <Label htmlFor="single-sku">Product SKU</Label>
+              <Label htmlFor="single-input">Product SKU or Image URL</Label>
               <div className="flex space-x-2 mt-2">
                 <Input
-                  id="single-sku"
-                  placeholder="e.g., 66P-00022N-FLS"
-                  value={singleSku}
-                  onChange={(e) => setSingleSku(e.target.value)}
+                  id="single-input"
+                  placeholder="e.g., 66P-00022N-FLS or https://example.com/image.jpg"
+                  value={singleInput}
+                  onChange={(e) => setSingleInput(e.target.value)}
                 />
                 <Button onClick={handleFetchProduct} disabled={fetchingProduct}>
                   {fetchingProduct ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch"}
                 </Button>
               </div>
-            </div>
-          )}
-
-          {/* Direct URL Input */}
-          {mode === "single" && inputType === "url" && (
-            <div>
-              <Label htmlFor="image-url">Image URL</Label>
-              <Input
-                id="image-url"
-                type="url"
-                placeholder="https://example.com/image.jpg"
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
-                className="mt-2"
-              />
-              <p className="text-xs text-gray-500 mt-1">Enter the direct URL to the image file</p>
+              <p className="text-xs text-gray-500 mt-1">Enter a Shopify SKU or direct image URL - the system will auto-detect</p>
             </div>
           )}
 
@@ -358,9 +302,9 @@ export default function SkuConverter() {
           <Button 
             onClick={handleProcess} 
             className="w-full bg-foxx-blue hover:bg-blue-600"
-            disabled={processSingleMutation.isPending || processBulkMutation.isPending || processUrlMutation.isPending}
+            disabled={processSingleMutation.isPending || processBulkMutation.isPending}
           >
-            {(processSingleMutation.isPending || processBulkMutation.isPending || processUrlMutation.isPending) ? (
+            {(processSingleMutation.isPending || processBulkMutation.isPending) ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 Processing...
@@ -386,12 +330,12 @@ export default function SkuConverter() {
                 className="w-full h-48 object-cover rounded-md mb-3"
               />
               <h4 className="font-medium text-gray-900">{currentProduct.title}</h4>
-              <p className="text-sm text-gray-500">SKU: {singleSku}</p>
+              <p className="text-sm text-gray-500">SKU: {singleInput}</p>
             </div>
-          ) : mode === "single" && inputType === "url" && imageUrl ? (
+          ) : mode === "single" && previewImage ? (
             <div className="border border-gray-200 rounded-lg p-4">
               <img 
-                src={imageUrl} 
+                src={previewImage} 
                 alt="Preview"
                 className="w-full h-48 object-cover rounded-md mb-3"
                 onError={(e) => {
@@ -399,19 +343,15 @@ export default function SkuConverter() {
                 }}
               />
               <h4 className="font-medium text-gray-900">Direct URL Image</h4>
-              <p className="text-sm text-gray-500 break-all">{imageUrl}</p>
+              <p className="text-sm text-gray-500 break-all">{previewImage}</p>
             </div>
           ) : mode === "single" ? (
             <div className="text-center py-12">
               <div className="mx-auto w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
                 <ImageIcon className="w-6 h-6 text-gray-400" />
               </div>
-              <h3 className="text-sm font-medium text-gray-900 mb-1">
-                {inputType === "sku" ? "No products loaded" : "No image loaded"}
-              </h3>
-              <p className="text-sm text-gray-500">
-                {inputType === "sku" ? "Enter a SKU and click fetch to preview" : "Enter an image URL to preview"}
-              </p>
+              <h3 className="text-sm font-medium text-gray-900 mb-1">No image loaded</h3>
+              <p className="text-sm text-gray-500">Enter a SKU or image URL and click fetch to preview</p>
             </div>
           ) : (
             <div className="text-center py-12">
@@ -424,7 +364,7 @@ export default function SkuConverter() {
           )}
 
           {/* Processing Status */}
-          {(processSingleMutation.isPending || processBulkMutation.isPending || processUrlMutation.isPending) && (
+          {(processSingleMutation.isPending || processBulkMutation.isPending) && (
             <div className="mt-4 bg-blue-50 border border-blue-200 rounded-md p-4">
               <div className="flex items-center">
                 <Loader2 className="h-5 w-5 text-blue-600 animate-spin mr-3" />

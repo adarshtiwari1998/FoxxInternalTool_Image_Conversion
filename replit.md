@@ -7,8 +7,9 @@ This is an image processing and conversion application that provides internal to
 - ✅ Shopify API integration implemented and connected
 - ✅ Image processing with Sharp library
 - ✅ PDF to image conversion with poppler
-- ✅ Direct URL image conversion feature added
-- ✅ Two input modes: SKU lookup from Shopify OR direct image URL processing
+- ✅ Smart input detection - single field accepts both SKU and image URLs
+- ✅ Automatic detection of input type (SKU vs URL) to prevent user confusion
+- ✅ Simplified interface with single input field for better user experience
 - ✅ All environment variables properly configured
 
 # User Preferences
