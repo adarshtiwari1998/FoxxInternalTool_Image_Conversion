@@ -30,15 +30,126 @@ export class ShopifyService {
     }
     
     try {
-      console.log(`Searching for product with variant SKU: ${sku}`);
-      return await this.searchProductBySkuRest(sku);
+      console.log(`🔍 Searching for product with variant SKU: ${sku}`);
+      
+      // Try GraphQL first (more efficient)
+      const graphqlResult = await this.searchProductBySkuGraphQL(sku);
+      if (graphqlResult) {
+        console.log(`✅ Found product via GraphQL: ${graphqlResult.title}`);
+        return graphqlResult;
+      }
+      
+      // Fallback to REST API with improved search
+      console.log(`⚠️ GraphQL search failed, trying REST API fallback...`);
+      return await this.searchProductBySkuRestImproved(sku);
     } catch (error) {
       console.error('Error fetching product by SKU:', error);
       throw error;
     }
   }
 
-  private async searchProductBySkuRest(sku: string): Promise<ShopifyProduct | null> {
+  private async searchProductBySkuGraphQL(sku: string): Promise<ShopifyProduct | null> {
+    try {
+      const query = `
+        query productVariantsBySku($query: String!) {
+          productVariants(first: 10, query: $query) {
+            edges {
+              node {
+                id
+                title
+                sku
+                price
+                product {
+                  id
+                  title
+                  handle
+                  variants(first: 250) {
+                    edges {
+                      node {
+                        id
+                        title
+                        sku
+                      }
+                    }
+                  }
+                  images(first: 10) {
+                    edges {
+                      node {
+                        id
+                        url
+                        altText
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const variables = {
+        query: `sku:"${sku}"`
+      };
+
+      console.log(`📡 GraphQL query for SKU: ${sku}`);
+      
+      const response = await fetch(`${this.baseUrl}/graphql.json`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify({ query, variables })
+      });
+
+      if (!response.ok) {
+        console.error(`❌ GraphQL API Error: ${response.status} ${response.statusText}`);
+        return null;
+      }
+
+      const result = await response.json();
+      
+      if (result.errors) {
+        console.error('❌ GraphQL errors:', result.errors);
+        return null;
+      }
+
+      const variants = result.data?.productVariants?.edges || [];
+      
+      if (variants.length === 0) {
+        console.log(`📭 No variants found with SKU: ${sku}`);
+        return null;
+      }
+
+      // Get the first matching variant's product
+      const variantNode = variants[0].node;
+      const product = variantNode.product;
+      
+      console.log(`🎯 Found matching variant: ${variantNode.sku} in product: ${product.title}`);
+
+      // Transform GraphQL response to match our schema
+      const transformedProduct = {
+        id: parseInt(product.id.replace('gid://shopify/Product/', '')),
+        title: product.title,
+        handle: product.handle,
+        variants: product.variants.edges.map((v: any) => ({
+          id: parseInt(v.node.id.replace('gid://shopify/ProductVariant/', '')),
+          sku: v.node.sku,
+          title: v.node.title,
+        })),
+        images: product.images.edges.map((img: any) => ({
+          id: parseInt(img.node.id.replace('gid://shopify/ProductImage/', '')),
+          src: img.node.url,
+          alt: img.node.altText,
+        })),
+      };
+
+      return shopifyProductSchema.parse(transformedProduct);
+    } catch (error) {
+      console.error('❌ GraphQL search error:', error);
+      return null;
+    }
+  }
+
+  private async searchProductBySkuRestImproved(sku: string): Promise<ShopifyProduct | null> {
     try {
       console.log(`Searching variants with REST API for SKU: ${sku}`);
       
