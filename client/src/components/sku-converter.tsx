@@ -274,10 +274,11 @@ export default function SkuConverter() {
                   value={singleInput}
                   onChange={(e) => setSingleInput(e.target.value)}
                   onPaste={(e) => {
-                    setTimeout(() => {
-                      const pastedText = e.currentTarget.value;
-                      const parsedInputs = parseInputs(pastedText);
+                    const clipboardData = e.clipboardData.getData('text');
+                    if (clipboardData) {
+                      const parsedInputs = parseInputs(clipboardData);
                       if (parsedInputs.length > 1) {
+                        e.preventDefault();
                         setBulkSkus(parsedInputs.join('\n'));
                         setMode('bulk');
                         setSingleInput('');
@@ -286,7 +287,7 @@ export default function SkuConverter() {
                           description: `Switched to bulk mode with ${parsedInputs.length} items`,
                         });
                       }
-                    }, 0);
+                    }
                   }}
                 />
                 <Button onClick={handleFetchProduct} disabled={fetchingProduct}>
@@ -308,17 +309,19 @@ export default function SkuConverter() {
                 value={bulkSkus}
                 onChange={(e) => setBulkSkus(e.target.value)}
                 onPaste={(e) => {
-                  setTimeout(() => {
-                    const pastedText = e.currentTarget.value;
-                    const parsedInputs = parseInputs(pastedText);
-                    if (parsedInputs.length !== pastedText.split('\n').length) {
+                  const clipboardData = e.clipboardData.getData('text');
+                  if (clipboardData) {
+                    const parsedInputs = parseInputs(clipboardData);
+                    const originalLines = clipboardData.split('\n').filter(line => line.trim());
+                    if (parsedInputs.length !== originalLines.length && parsedInputs.length > 0) {
+                      e.preventDefault();
                       setBulkSkus(parsedInputs.join('\n'));
                       toast({
                         title: "Spreadsheet data detected!",
                         description: `Parsed ${parsedInputs.length} items from your paste`,
                       });
                     }
-                  }, 100);
+                  }
                 }}
                 className="mt-2"
               />
