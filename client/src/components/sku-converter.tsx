@@ -113,10 +113,10 @@ export default function SkuConverter() {
     try {
       const result = await fetchProduct();
       if (result.data) {
-        setCurrentProduct(result.data);
+        setCurrentProduct(result.data as Product);
         toast({
           title: "Product found!",
-          description: `Loaded ${result.data.title}`,
+          description: `Loaded ${(result.data as Product).title}`,
         });
       }
     } catch (error) {

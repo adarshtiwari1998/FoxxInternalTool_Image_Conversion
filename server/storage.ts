@@ -20,6 +20,7 @@ export class MemStorage implements IStorage {
     const id = randomUUID();
     const job: ProcessingJob = {
       ...insertJob,
+      dpi: insertJob.dpi || 300,
       id,
       status: 'pending',
       resultUrl: null,

@@ -2,6 +2,14 @@
 
 This is an image processing and conversion application that provides internal tooling for Foxx Life Sciences. The system allows users to convert product images from Shopify SKUs and extract pages from PDF documents, transforming them into specific image formats and dimensions for business use. The application features a React frontend with a clean, professional interface and an Express.js backend that handles image processing workflows.
 
+## Current Status
+- ✅ Complete application built with SKU and PDF processing
+- ✅ Shopify API integration implemented  
+- ✅ Image processing with Sharp library
+- ✅ PDF to image conversion with poppler
+- ⚠️ **Requires SHOPIFY_STORE environment variable to be set to "shopfls.myshopify.com"**
+- ✅ SHOPIFY_ACCESS_TOKEN configured
+
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
