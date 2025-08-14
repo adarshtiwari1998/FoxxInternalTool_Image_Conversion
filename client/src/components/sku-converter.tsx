@@ -56,11 +56,15 @@ export default function SkuConverter() {
   const [currentBatchJob, setCurrentBatchJob] = useState<BatchJob | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
 
   // Server-Sent Events connection for real-time updates (avoids WebSocket conflicts)
   const connectToJobUpdates = (jobId: string) => {
+    console.log(`🔗 Connecting to SSE for job: ${jobId}`);
+    
     if (eventSourceRef.current) {
+      console.log('🔌 Closing previous SSE connection');
       eventSourceRef.current.close();
     }
     
@@ -68,61 +72,118 @@ export default function SkuConverter() {
     eventSourceRef.current = eventSource;
     
     eventSource.onopen = () => {
-      console.log('🔗 SSE connected for job:', jobId);
+      console.log('✅ SSE connected for job:', jobId);
       setIsConnected(true);
     };
     
     // Set connected immediately since EventSource doesn't always fire onopen
     setIsConnected(true);
+    console.log('📡 SSE connection initiated for job:', jobId);
     
     eventSource.onmessage = (event) => {
+      console.log('📤 Received SSE message:', event.data);
       try {
         const data = JSON.parse(event.data);
+        console.log('📝 Parsed SSE data:', data);
         
         // Ensure connection status is updated when we receive data
         if (!isConnected) {
+          console.log('🔗 Setting connected to true from message receive');
           setIsConnected(true);
         }
         
         if (data.type === 'connected') {
-          // Initial heartbeat - confirm connection
+          console.log('✅ Received connected confirmation');
           setIsConnected(true);
         } else if (data.type === 'jobProgress') {
-          setCurrentBatchJob(prev => prev ? {
-            ...prev,
-            status: data.job.status,
-            progress: data.job.progress
-          } : null);
-        } else if (data.type === 'itemProgress') {
+          console.log('📈 Received job progress:', data.job);
           setCurrentBatchJob(prev => {
-            if (!prev || prev.id !== data.jobId) return prev;
+            console.log('🔄 Updating job progress from:', prev?.progress, 'to:', data.job.progress);
+            return prev ? {
+              ...prev,
+              status: data.job.status,
+              progress: data.job.progress
+            } : null;
+          });
+        } else if (data.type === 'itemProgress') {
+          console.log('📈 Received item progress:', data.item);
+          setCurrentBatchJob(prev => {
+            if (!prev || prev.id !== data.jobId) {
+              console.log('⚠️ Item progress for wrong/missing job');
+              return prev;
+            }
             
             const updatedItems = prev.items.map(item => 
               item.id === data.item.id ? { ...item, ...data.item } : item
             );
             
+            console.log('🔄 Updated items array with new status');
             return { ...prev, items: updatedItems };
           });
         }
       } catch (error) {
-        console.error('❌ SSE message parsing error:', error);
+        console.error('❌ SSE message parsing error:', error, 'Raw data:', event.data);
       }
     };
     
     eventSource.onerror = (error) => {
       console.error('❌ SSE error:', error);
+      console.log('🔌 Setting connected to false due to error');
       setIsConnected(false);
     };
+    
+    // Debug: Check connection state
+    console.log(`🔍 SSE readyState: ${eventSource.readyState}`);
   };
   
-  // Cleanup SSE on unmount
+  // Cleanup SSE and polling on unmount
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
     };
   }, []);
+  
+  // Polling fallback to ensure we get job updates
+  const startPollingFallback = (jobId: string) => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+    
+    console.log('🔄 Starting polling fallback for job:', jobId);
+    
+    pollingIntervalRef.current = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/batch-job/${jobId}`);
+        if (response.ok) {
+          const jobData = await response.json();
+          console.log('📊 Polling update:', jobData.progress);
+          
+          setCurrentBatchJob(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              status: jobData.status,
+              progress: jobData.progress,
+              items: jobData.items || prev.items
+            };
+          });
+          
+          // Stop polling if job is complete
+          if (jobData.status === 'completed' || jobData.status === 'failed') {
+            console.log('✅ Job completed, stopping polling');
+            clearInterval(pollingIntervalRef.current!);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Polling error:', error);
+      }
+    }, 2000); // Poll every 2 seconds
+  };
 
   // Clear preview when input is empty
   useEffect(() => {
@@ -135,7 +196,13 @@ export default function SkuConverter() {
   // Subscribe to job updates when batch job starts
   useEffect(() => {
     if (currentBatchJob?.id) {
-      connectToJobUpdates(currentBatchJob.id);
+      console.log('🚀 Starting SSE connection and polling for job:', currentBatchJob.id);
+      
+      // Small delay to ensure job is fully created
+      setTimeout(() => {
+        connectToJobUpdates(currentBatchJob.id);
+        startPollingFallback(currentBatchJob.id);
+      }, 500);
     }
   }, [currentBatchJob?.id]);
 
@@ -535,7 +602,7 @@ export default function SkuConverter() {
               )}
             </Button>
 
-            {currentBatchJob && currentBatchJob.progress.completed > 0 && (
+            {currentBatchJob && (currentBatchJob.progress.completed > 0 || currentBatchJob.status === 'completed') && (
               <Button
                 onClick={() => downloadBatchMutation.mutate(currentBatchJob.id)}
                 variant="outline"

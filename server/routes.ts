@@ -490,10 +490,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     clients.get(jobId)!.add(res);
     
-    console.log(`📡 SSE client subscribed to job: ${jobId}`);
+    console.log(`📡 SSE client subscribed to job: ${jobId} (${clients.get(jobId)!.size} total clients)`);
     
     // Send initial heartbeat
     res.write('data: {"type":"connected"}\n\n');
+    
+    // Send current job status if available
+    const job = queueProcessor.getJob(jobId);
+    if (job) {
+      console.log(`📤 Sending initial job status to new client`);
+      const data = JSON.stringify({
+        type: 'jobProgress',
+        job: {
+          id: job.id,
+          status: job.status,
+          progress: job.progress
+        }
+      });
+      res.write(`data: ${data}\n\n`);
+    }
     
     // Clean up on client disconnect
     req.on('close', () => {
@@ -510,8 +525,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Listen to queue processor events and broadcast to SSE clients
   queueProcessor.on('jobProgress', (job) => {
+    console.log(`📡 Broadcasting job progress for ${job.id}: ${job.progress.completed}/${job.progress.total}`);
     const jobClients = clients.get(job.id);
-    if (jobClients) {
+    if (jobClients && jobClients.size > 0) {
       const data = JSON.stringify({
         type: 'jobProgress',
         job: {
@@ -521,19 +537,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
       
+      console.log(`📤 Sending to ${jobClients.size} clients:`, data);
       jobClients.forEach(client => {
         try {
           client.write(`data: ${data}\n\n`);
         } catch (error) {
+          console.error('❌ Error sending SSE:', error);
           jobClients.delete(client);
         }
       });
+    } else {
+      console.log('⚠️  No clients connected for job:', job.id);
     }
   });
   
   queueProcessor.on('itemProgress', ({ jobId, item }) => {
+    console.log(`📡 Broadcasting item progress for ${jobId}: ${item.input} -> ${item.status}`);
     const jobClients = clients.get(jobId);
-    if (jobClients) {
+    if (jobClients && jobClients.size > 0) {
       const data = JSON.stringify({
         type: 'itemProgress',
         jobId,
@@ -550,13 +571,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
       
+      console.log(`📤 Sending item update to ${jobClients.size} clients`);
       jobClients.forEach(client => {
         try {
           client.write(`data: ${data}\n\n`);
         } catch (error) {
+          console.error('❌ Error sending SSE item update:', error);
           jobClients.delete(client);
         }
       });
+    } else {
+      console.log('⚠️  No clients connected for item update:', jobId);
     }
   });
   
