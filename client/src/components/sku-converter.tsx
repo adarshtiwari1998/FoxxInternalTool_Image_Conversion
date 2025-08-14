@@ -46,6 +46,20 @@ export default function SkuConverter() {
     }
   };
 
+  // Enhanced function to parse multiple SKUs/URLs from pasted content
+  const parseInputs = (input: string): string[] => {
+    if (!input.trim()) return [];
+    
+    // Split by multiple separators: newlines, tabs, commas, semicolons
+    const rawInputs = input
+      .split(/[\n\t,;]+/)
+      .map(item => item.trim())
+      .filter(item => item.length > 0);
+    
+    // Remove duplicates
+    return Array.from(new Set(rawInputs));
+  };
+
   // Fetch product by SKU
   const { data: product, isLoading: fetchingProduct, refetch: fetchProduct } = useQuery({
     queryKey: ['/api/product', singleInput],
@@ -101,7 +115,7 @@ export default function SkuConverter() {
   // Process bulk SKUs/URLs mutation
   const processBulkMutation = useMutation({
     mutationFn: async () => {
-      const inputs = bulkSkus.split('\n').filter(input => input.trim()).slice(0, 10);
+      const inputs = parseInputs(bulkSkus).slice(0, 10);
       
       // Separate SKUs and URLs
       const skus: string[] = [];
@@ -201,7 +215,7 @@ export default function SkuConverter() {
       }
       processSingleMutation.mutate();
     } else {
-      const inputs = bulkSkus.split('\n').filter(input => input.trim());
+      const inputs = parseInputs(bulkSkus);
       if (inputs.length === 0) {
         toast({
           title: "Error", 
@@ -259,6 +273,21 @@ export default function SkuConverter() {
                   placeholder="e.g., 66P-00022N-FLS or https://example.com/image.jpg"
                   value={singleInput}
                   onChange={(e) => setSingleInput(e.target.value)}
+                  onPaste={(e) => {
+                    setTimeout(() => {
+                      const pastedText = e.currentTarget.value;
+                      const parsedInputs = parseInputs(pastedText);
+                      if (parsedInputs.length > 1) {
+                        setBulkSkus(parsedInputs.join('\n'));
+                        setMode('bulk');
+                        setSingleInput('');
+                        toast({
+                          title: "Multiple values detected!",
+                          description: `Switched to bulk mode with ${parsedInputs.length} items`,
+                        });
+                      }
+                    }, 0);
+                  }}
                 />
                 <Button onClick={handleFetchProduct} disabled={fetchingProduct}>
                   {fetchingProduct ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch"}
@@ -271,16 +300,36 @@ export default function SkuConverter() {
           {/* Bulk SKU/URL Input */}
           {mode === "bulk" && (
             <div>
-              <Label htmlFor="bulk-skus">Product SKUs or Image URLs (one per line, max 10)</Label>
+              <Label htmlFor="bulk-skus">Product SKUs or Image URLs (max 10)</Label>
               <Textarea
                 id="bulk-skus"
-                placeholder="66P-00022N-FLS&#10;https://example.com/image.jpg&#10;66P-00023N-FLS&#10;..."
+                placeholder="Paste from spreadsheet or enter manually:\n66P-00022N-FLS\nhttps://example.com/image.jpg\n66P-00023N-FLS\n..."
                 rows={6}
                 value={bulkSkus}
                 onChange={(e) => setBulkSkus(e.target.value)}
+                onPaste={(e) => {
+                  setTimeout(() => {
+                    const pastedText = e.currentTarget.value;
+                    const parsedInputs = parseInputs(pastedText);
+                    if (parsedInputs.length !== pastedText.split('\n').length) {
+                      setBulkSkus(parsedInputs.join('\n'));
+                      toast({
+                        title: "Spreadsheet data detected!",
+                        description: `Parsed ${parsedInputs.length} items from your paste`,
+                      });
+                    }
+                  }, 100);
+                }}
                 className="mt-2"
               />
-              <p className="text-xs text-gray-500 mt-1">Enter one SKU or image URL per line - the system will auto-detect</p>
+              <div className="flex items-center justify-between mt-1">
+                <p className="text-xs text-gray-500">Paste from Excel/Google Sheets or enter manually - supports tabs, commas, newlines</p>
+                {bulkSkus && (
+                  <Badge variant="outline" className="text-xs">
+                    {parseInputs(bulkSkus).length} items
+                  </Badge>
+                )}
+              </div>
             </div>
           )}
 
