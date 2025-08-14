@@ -6,20 +6,29 @@ const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 export class ShopifyService {
   private baseUrl: string;
   private headers: Record<string, string>;
+  private isConfigured: boolean;
 
   constructor() {
-    if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
-      throw new Error('Missing required Shopify environment variables: SHOPIFY_STORE and SHOPIFY_ACCESS_TOKEN');
-    }
+    this.isConfigured = !!(SHOPIFY_STORE && SHOPIFY_ACCESS_TOKEN);
     
-    this.baseUrl = `https://${SHOPIFY_STORE}/admin/api/2023-10`;
-    this.headers = {
-      'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-      'Content-Type': 'application/json',
-    };
+    if (this.isConfigured && SHOPIFY_STORE && SHOPIFY_ACCESS_TOKEN) {
+      this.baseUrl = `https://${SHOPIFY_STORE}/admin/api/2023-10`;
+      this.headers = {
+        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+        'Content-Type': 'application/json',
+      };
+    } else {
+      console.warn('⚠️  Shopify API not configured - missing SHOPIFY_STORE and/or SHOPIFY_ACCESS_TOKEN');
+      this.baseUrl = '';
+      this.headers = {};
+    }
   }
 
   async getProductBySku(sku: string): Promise<ShopifyProduct | null> {
+    if (!this.isConfigured) {
+      throw new Error('Shopify API not configured. Please set SHOPIFY_STORE and SHOPIFY_ACCESS_TOKEN environment variables.');
+    }
+    
     try {
       console.log(`Searching for product with variant SKU: ${sku}`);
       return await this.searchProductBySkuRest(sku);
