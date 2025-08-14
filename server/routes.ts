@@ -13,6 +13,67 @@ import {
 } from "@shared/schema";
 import JSZip from 'jszip';
 
+// Helper function to extract meaningful filename from URL
+function extractFilenameFromUrl(url: string): string | null {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    
+    // Handle Shopify CDN URLs - extract product info if possible
+    if (pathname.includes('/files/') || pathname.includes('/cdn/shop/')) {
+      // Extract product name from Shopify CDN URLs like:
+      // /cdn/shop/files/Vactraps_S_2L-800x800-foxxlifesciences_6fbb6068-bbb8-4fb8-81a4-3c14cab08830_1024x1024.png
+      let filenamePart = '';
+      
+      if (pathname.includes('/files/')) {
+        filenamePart = pathname.split('/files/')[1];
+      } else if (pathname.includes('/products/')) {
+        filenamePart = pathname.split('/products/')[1];
+      }
+      
+      if (filenamePart) {
+        // Extract the meaningful part before dimensions or UUIDs
+        let cleanName = filenamePart
+          .replace(/_\d+x\d+.*$/, '') // Remove dimensions and everything after
+          .replace(/[-_]foxxlifesciences.*$/, '') // Remove foxxlifesciences and UUID parts
+          .replace(/[-_][a-f0-9]{8}[-][a-f0-9]{4}[-][a-f0-9]{4}[-][a-f0-9]{4}[-][a-f0-9]{12}.*$/, '') // Remove UUID patterns
+          .replace(/[-_]+$/, '') // Remove trailing dashes/underscores
+          .replace(/^[-_]+/, '') // Remove leading dashes/underscores
+          .replace(/[-_]+/g, '-'); // Normalize separators
+        
+        // Try to extract meaningful product name from Shopify product URLs
+        if (cleanName.includes('Vactraps')) {
+          // Handle Vactraps product naming
+          cleanName = cleanName.replace(/[-_]S[-_]/, '-S-').replace(/[-_](\d+L)[-_]/, '-$1-');
+        }
+        
+        if (cleanName && cleanName.length > 2) {
+          return cleanName;
+        }
+      }
+    }
+    
+    // For other URLs, extract filename from path
+    const segments = pathname.split('/');
+    const lastSegment = segments[segments.length - 1];
+    
+    if (lastSegment && lastSegment.length > 0) {
+      // Remove file extension for cleaner name
+      const nameWithoutExt = lastSegment.replace(/\.[^.]*$/, '');
+      if (nameWithoutExt && nameWithoutExt.length > 0) {
+        return nameWithoutExt;
+      }
+    }
+    
+    // Fallback to domain name if no good filename found
+    return urlObj.hostname.replace(/^www\./, '').replace(/\./g, '-');
+    
+  } catch (error) {
+    console.warn('Failed to extract filename from URL:', url);
+    return null;
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   
   // Health check endpoint
@@ -125,7 +186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Process image
       const { width, height } = imageProcessor.parseDimensions(dimensions);
-      const filename = `converted-image-${Date.now()}`;
+      const filename = extractFilenameFromUrl(url) || `converted-image-${Date.now()}`;
       
       const processedImage = await imageProcessor.processImage(url, {
         width,
@@ -235,13 +296,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Process URLs
       if (urls.length > 0) {
         urls.forEach((url, index) => {
+          // Try to extract meaningful filename from URL
+          const extractedFilename = extractFilenameFromUrl(url) || `url-image-${index + 1}`;
+          
           imagesToProcess.push({
             url,
             options: {
               width,
               height,
               dpi,
-              filename: `url-image-${index + 1}`
+              filename: extractedFilename
             }
           });
         });
