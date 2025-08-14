@@ -115,7 +115,7 @@ export default function SkuConverter() {
   // Process bulk SKUs/URLs mutation
   const processBulkMutation = useMutation({
     mutationFn: async () => {
-      const inputs = parseInputs(bulkSkus).slice(0, 10);
+      const inputs = parseInputs(bulkSkus);
       
       // Separate SKUs and URLs
       const skus: string[] = [];
@@ -224,14 +224,6 @@ export default function SkuConverter() {
         });
         return;
       }
-      if (inputs.length > 10) {
-        toast({
-          title: "Error",
-          description: "Maximum 10 SKUs/URLs allowed for bulk processing",
-          variant: "destructive",
-        });
-        return;
-      }
       processBulkMutation.mutate();
     }
   };
@@ -258,7 +250,7 @@ export default function SkuConverter() {
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="bulk" id="bulk" />
-                <Label htmlFor="bulk">Bulk SKUs/URLs (up to 10)</Label>
+                <Label htmlFor="bulk">Bulk SKUs/URLs</Label>
               </div>
             </RadioGroup>
           </div>
@@ -301,7 +293,7 @@ export default function SkuConverter() {
           {/* Bulk SKU/URL Input */}
           {mode === "bulk" && (
             <div>
-              <Label htmlFor="bulk-skus">Product SKUs or Image URLs (max 10)</Label>
+              <Label htmlFor="bulk-skus">Product SKUs or Image URLs</Label>
               <Textarea
                 id="bulk-skus"
                 placeholder="Paste from spreadsheet or enter manually:\n66P-00022N-FLS\nhttps://example.com/image.jpg\n66P-00023N-FLS\n..."
