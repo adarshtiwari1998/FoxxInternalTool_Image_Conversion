@@ -24,6 +24,15 @@ export const insertProcessingJobSchema = createInsertSchema(processingJobs).pick
   dpi: true,
 });
 
+// URL processing request
+export const urlProcessingRequestSchema = z.object({
+  url: z.string().url(),
+  dimensions: z.enum(['342x427', '600x600']),
+  dpi: z.number().min(72).max(1200),
+});
+
+export type UrlProcessingRequest = z.infer<typeof urlProcessingRequestSchema>;
+
 export type InsertProcessingJob = z.infer<typeof insertProcessingJobSchema>;
 export type ProcessingJob = typeof processingJobs.$inferSelect;
 

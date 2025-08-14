@@ -4,11 +4,12 @@ This is an image processing and conversion application that provides internal to
 
 ## Current Status
 - ✅ Complete application built with SKU and PDF processing
-- ✅ Shopify API integration implemented  
+- ✅ Shopify API integration implemented and connected
 - ✅ Image processing with Sharp library
 - ✅ PDF to image conversion with poppler
-- ⚠️ **Requires SHOPIFY_STORE environment variable to be set to "shopfls.myshopify.com"**
-- ✅ SHOPIFY_ACCESS_TOKEN configured
+- ✅ Direct URL image conversion feature added
+- ✅ Two input modes: SKU lookup from Shopify OR direct image URL processing
+- ✅ All environment variables properly configured
 
 # User Preferences
 

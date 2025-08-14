@@ -20,7 +20,9 @@ interface Product {
 
 export default function SkuConverter() {
   const [mode, setMode] = useState<"single" | "bulk">("single");
+  const [inputType, setInputType] = useState<"sku" | "url">("sku");
   const [singleSku, setSingleSku] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
   const [bulkSkus, setBulkSkus] = useState("");
   const [dimensions, setDimensions] = useState("342x427");
   const [dpi, setDpi] = useState("300");
@@ -49,6 +51,39 @@ export default function SkuConverter() {
       const a = document.createElement('a');
       a.href = url;
       a.download = `${singleSku}.jpg`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      
+      toast({
+        title: "Success!",
+        description: "Image processed and downloaded successfully",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "Failed to process image",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Process single URL mutation
+  const processUrlMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/process-url', {
+        url: imageUrl,
+        dimensions,
+        dpi: Number(dpi)
+      });
+      return response;
+    },
+    onSuccess: async (response) => {
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `converted-image.jpg`;
       a.click();
       window.URL.revokeObjectURL(url);
       
@@ -131,15 +166,38 @@ export default function SkuConverter() {
 
   const handleProcess = () => {
     if (mode === "single") {
-      if (!singleSku.trim()) {
-        toast({
-          title: "Error",
-          description: "Please enter a SKU",
-          variant: "destructive",
-        });
-        return;
+      if (inputType === "sku") {
+        if (!singleSku.trim()) {
+          toast({
+            title: "Error",
+            description: "Please enter a SKU",
+            variant: "destructive",
+          });
+          return;
+        }
+        processSingleMutation.mutate();
+      } else {
+        if (!imageUrl.trim()) {
+          toast({
+            title: "Error",
+            description: "Please enter an image URL",
+            variant: "destructive",
+          });
+          return;
+        }
+        // Basic URL validation
+        try {
+          new URL(imageUrl);
+        } catch {
+          toast({
+            title: "Error",
+            description: "Please enter a valid URL",
+            variant: "destructive",
+          });
+          return;
+        }
+        processUrlMutation.mutate();
       }
-      processSingleMutation.mutate();
     } else {
       const skus = bulkSkus.split('\n').filter(sku => sku.trim());
       if (skus.length === 0) {
@@ -180,17 +238,38 @@ export default function SkuConverter() {
             >
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="single" id="single" />
-                <Label htmlFor="single">Single SKU</Label>
+                <Label htmlFor="single">Single Image</Label>
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="bulk" id="bulk" />
-                <Label htmlFor="bulk">Bulk (up to 10)</Label>
+                <Label htmlFor="bulk">Bulk SKUs (up to 10)</Label>
               </div>
             </RadioGroup>
           </div>
 
-          {/* Single SKU Input */}
+          {/* Input Type Selection (only for single mode) */}
           {mode === "single" && (
+            <div>
+              <Label className="text-sm font-medium">Input Type</Label>
+              <RadioGroup 
+                value={inputType} 
+                onValueChange={(value: "sku" | "url") => setInputType(value)}
+                className="flex items-center space-x-4 mt-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="sku" id="input-sku" />
+                  <Label htmlFor="input-sku">SKU Lookup</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="url" id="input-url" />
+                  <Label htmlFor="input-url">Direct URL</Label>
+                </div>
+              </RadioGroup>
+            </div>
+          )}
+
+          {/* Single SKU Input */}
+          {mode === "single" && inputType === "sku" && (
             <div>
               <Label htmlFor="single-sku">Product SKU</Label>
               <div className="flex space-x-2 mt-2">
@@ -204,6 +283,22 @@ export default function SkuConverter() {
                   {fetchingProduct ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch"}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* Direct URL Input */}
+          {mode === "single" && inputType === "url" && (
+            <div>
+              <Label htmlFor="image-url">Image URL</Label>
+              <Input
+                id="image-url"
+                type="url"
+                placeholder="https://example.com/image.jpg"
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+                className="mt-2"
+              />
+              <p className="text-xs text-gray-500 mt-1">Enter the direct URL to the image file</p>
             </div>
           )}
 
@@ -263,9 +358,9 @@ export default function SkuConverter() {
           <Button 
             onClick={handleProcess} 
             className="w-full bg-foxx-blue hover:bg-blue-600"
-            disabled={processSingleMutation.isPending || processBulkMutation.isPending}
+            disabled={processSingleMutation.isPending || processBulkMutation.isPending || processUrlMutation.isPending}
           >
-            {(processSingleMutation.isPending || processBulkMutation.isPending) ? (
+            {(processSingleMutation.isPending || processBulkMutation.isPending || processUrlMutation.isPending) ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 Processing...
@@ -293,13 +388,30 @@ export default function SkuConverter() {
               <h4 className="font-medium text-gray-900">{currentProduct.title}</h4>
               <p className="text-sm text-gray-500">SKU: {singleSku}</p>
             </div>
+          ) : mode === "single" && inputType === "url" && imageUrl ? (
+            <div className="border border-gray-200 rounded-lg p-4">
+              <img 
+                src={imageUrl} 
+                alt="Preview"
+                className="w-full h-48 object-cover rounded-md mb-3"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+              <h4 className="font-medium text-gray-900">Direct URL Image</h4>
+              <p className="text-sm text-gray-500 break-all">{imageUrl}</p>
+            </div>
           ) : mode === "single" ? (
             <div className="text-center py-12">
               <div className="mx-auto w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
                 <ImageIcon className="w-6 h-6 text-gray-400" />
               </div>
-              <h3 className="text-sm font-medium text-gray-900 mb-1">No products loaded</h3>
-              <p className="text-sm text-gray-500">Enter a SKU and click fetch to preview</p>
+              <h3 className="text-sm font-medium text-gray-900 mb-1">
+                {inputType === "sku" ? "No products loaded" : "No image loaded"}
+              </h3>
+              <p className="text-sm text-gray-500">
+                {inputType === "sku" ? "Enter a SKU and click fetch to preview" : "Enter an image URL to preview"}
+              </p>
             </div>
           ) : (
             <div className="text-center py-12">
@@ -312,7 +424,7 @@ export default function SkuConverter() {
           )}
 
           {/* Processing Status */}
-          {(processSingleMutation.isPending || processBulkMutation.isPending) && (
+          {(processSingleMutation.isPending || processBulkMutation.isPending || processUrlMutation.isPending) && (
             <div className="mt-4 bg-blue-50 border border-blue-200 rounded-md p-4">
               <div className="flex items-center">
                 <Loader2 className="h-5 w-5 text-blue-600 animate-spin mr-3" />

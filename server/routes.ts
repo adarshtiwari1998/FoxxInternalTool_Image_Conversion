@@ -7,7 +7,8 @@ import { pdfProcessor } from "./services/pdfProcessor";
 import { 
   insertProcessingJobSchema, 
   bulkProcessingRequestSchema,
-  pdfProcessingRequestSchema
+  pdfProcessingRequestSchema,
+  urlProcessingRequestSchema
 } from "@shared/schema";
 import JSZip from 'jszip';
 
@@ -99,6 +100,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     } catch (error) {
       console.error("Error processing SKU:", error);
+      res.status(500).json({ error: "Failed to process image" });
+    }
+  });
+
+  // Process single URL
+  app.post("/api/process-url", async (req, res) => {
+    try {
+      const validatedData = urlProcessingRequestSchema.parse(req.body);
+      const { url, dimensions, dpi } = validatedData;
+
+      // Create processing job
+      const job = await storage.createProcessingJob({
+        type: 'url',
+        input: url,
+        dimensions,
+        dpi: Number(dpi)
+      });
+
+      await storage.updateProcessingJob(job.id, {
+        status: 'processing'
+      });
+
+      // Process image
+      const { width, height } = imageProcessor.parseDimensions(dimensions);
+      const filename = `converted-image-${Date.now()}`;
+      
+      const processedImage = await imageProcessor.processImage(url, {
+        width,
+        height,
+        dpi: Number(dpi),
+        filename
+      });
+
+      // Update job as completed
+      await storage.updateProcessingJob(job.id, {
+        status: 'completed'
+      });
+
+      // Return processed image
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.jpg"`);
+      res.send(processedImage);
+
+    } catch (error) {
+      console.error("Error processing URL:", error);
       res.status(500).json({ error: "Failed to process image" });
     }
   });
